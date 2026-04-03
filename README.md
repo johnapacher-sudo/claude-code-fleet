@@ -24,22 +24,55 @@ When you need to:
 git clone https://github.com/<your-username>/claude-code-fleet.git
 cd claude-code-fleet
 
-# Create your config
-cp fleet.config.example.json fleet.config.json
-# Edit fleet.config.json with your API keys and model preferences
+# Initialize config (creates fleet.config.json from template)
+node src/index.js init
+
+# Edit with your API keys and model preferences
+# Or manually: cp fleet.config.example.json fleet.config.json
 
 # Launch the fleet
-npm run fleet -- up
+node src/index.js up
 
 # Attach to the tmux session
-npm run fleet -- attach
-# or directly:
-tmux attach -t claude-fleet
+node src/index.js attach
+```
+
+## Commands
+
+```
+fleet up                          Start all instances
+fleet up --only opus,sonnet       Start only named instances
+fleet up --config ~/my-fleet.json Use specific config file
+fleet down                        Stop the fleet
+fleet restart                     Restart the fleet
+fleet restart --only sonnet       Restart specific instances
+fleet ls                          List running instances
+fleet status                      Show detailed instance configs
+fleet attach                      Attach to the tmux session
+fleet init                        Create fleet.config.json from template
 ```
 
 ## Configuration
 
-Copy `fleet.config.example.json` to `fleet.config.json` and customize:
+### Config file search order
+
+1. `fleet.config.local.json` (gitignored, for local overrides)
+2. `fleet.config.json`
+3. `~/.config/claude-code-fleet/config.json`
+
+### Instance options
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Yes | Instance name (used as tmux window name) |
+| `apiKey` | Yes | Anthropic API key (`ANTHROPIC_API_KEY`) |
+| `model` | No | Model to use (e.g., `claude-opus-4-6`, `claude-sonnet-4-6`) |
+| `apiBaseUrl` | No | Custom API endpoint (`ANTHROPIC_BASE_URL`) |
+| `cwd` | No | Working directory for the instance |
+| `env` | No | Additional environment variables as key-value pairs |
+| `args` | No | Extra CLI arguments passed to `claude` |
+
+### Example
 
 ```json
 {
@@ -56,6 +89,15 @@ Copy `fleet.config.example.json` to `fleet.config.json` and customize:
       "apiKey": "sk-ant-api03-yyyyy",
       "model": "claude-sonnet-4-6",
       "cwd": "./workspace/sonnet"
+    },
+    {
+      "name": "custom-endpoint",
+      "apiKey": "your-key",
+      "model": "claude-sonnet-4-6",
+      "apiBaseUrl": "https://your-proxy.example.com/v1",
+      "env": { "CUSTOM_HEADER": "value" },
+      "args": ["--verbose"],
+      "cwd": "./workspace/custom"
     }
   ],
   "tmux": {
@@ -65,52 +107,32 @@ Copy `fleet.config.example.json` to `fleet.config.json` and customize:
 }
 ```
 
-### Instance Options
-
-| Field | Required | Description |
-|-------|----------|-------------|
-| `name` | Yes | Instance name (used as tmux window name) |
-| `apiKey` | Yes | Anthropic API key (`ANTHROPIC_API_KEY`) |
-| `model` | No | Model to use (e.g., `claude-opus-4-6`, `claude-sonnet-4-6`) |
-| `apiBaseUrl` | No | Custom API endpoint (`ANTHROPIC_BASE_URL`) |
-| `cwd` | No | Working directory for the instance |
-
-### Tmux Options
+### Tmux options
 
 | Field | Default | Description |
 |-------|---------|-------------|
 | `sessionName` | `claude-fleet` | tmux session name |
 | `layout` | `tiled` | tmux layout (`tiled`, `even-horizontal`, `even-vertical`, `main-horizontal`) |
 
-## Commands
-
-```bash
-fleet up        # Start all instances (default command)
-fleet down      # Stop the fleet
-fleet ls        # List running instances
-fleet attach    # Attach to the tmux session
-```
-
 ## How It Works
 
-1. Reads `fleet.config.json` for instance definitions
-2. Creates a tmux session with one window per instance
-3. Each window launches `claude` with the configured model and API key
-4. All instances run in parallel within the tmux session
+1. Reads config file for instance definitions
+2. Validates configuration (required fields, duplicate names)
+3. Checks for `tmux` and `claude` CLI dependencies
+4. Creates a tmux session with one window per instance
+5. Each window launches `claude` with the configured model and environment
+6. All instances run in parallel within the tmux session
 
 ## Tmux Quick Reference
 
 ```bash
-# Attach to fleet
-tmux attach -t claude-fleet
+tmux attach -t claude-fleet   # Attach to fleet
 
-# Switch between instances (inside tmux)
+# Inside tmux:
 Ctrl+b n    # Next window
 Ctrl+b p    # Previous window
 Ctrl+b 0-9  # Jump to window by number
-
-# Detach (fleet keeps running)
-Ctrl+b d
+Ctrl+b d    # Detach (fleet keeps running)
 ```
 
 ## License
