@@ -48,7 +48,7 @@ fleet ls
 fleet down
 ```
 
-## 两种模式
+## 三种模式
 
 ### 模型配置模式
 
@@ -58,13 +58,23 @@ fleet down
 - `fleet run` 启动前台交互式会话，继承 `stdio`
 - 如果未指定 `--model` 参数，将显示交互式箭头键选择菜单
 
-### Fleet 模式
+### Fleet 模式（后台）
 
 在配置文件中定义多个实例，并将它们作为后台进程进行管理。
 
 - `fleet up` 将每个实例作为独立后台进程启动
 - PID 记录在 `~/.config/claude-code-fleet/fleet-state.json` 中
 - 失效条目（已死亡的 PID）会自动清理
+
+### Master 模式（带 TUI）
+
+启动 master 守护进程，通过实时终端 TUI 面板编排多个 worker。Worker 自主执行任务队列中的任务，进度、工具使用和错误通过 Claude Code hooks 上报。
+
+- `fleet start` 启动 master + 所有 worker，显示 TUI 面板
+- Worker 通过 hook 注入的配置运行 `claude -p`，自动上报进度
+- 每个 worker 独立的任务队列：任务按顺序执行，前一个完成后自动开始下一个
+- 通过 TUI 输入或 `fleet task add` 动态追加任务
+- `fleet stop`（TUI 中 Ctrl+Q）分离 master，worker 继续运行
 
 ## 命令
 
@@ -76,6 +86,8 @@ fleet down
 | `fleet model edit` | — | 交互式编辑已有的模型配置 |
 | `fleet model delete` | `model rm` | 交互式删除模型配置 |
 | `fleet up` | `start` | 将所有（或 `--only` 指定的）实例作为后台进程启动 |
+| `fleet start` | — | 启动 master 守护进程 + TUI + 所有 worker |
+| `fleet task add <worker> <task>` | — | 向运行中的 worker 追加任务 |
 | `fleet down` | `stop` | 停止所有运行中的后台实例 |
 | `fleet restart` | — | 停止然后重新启动所有（或 `--only` 指定的）实例 |
 | `fleet ls` | `list` | 列出当前运行中的后台实例（含 PID 和模型信息） |
@@ -110,6 +122,31 @@ fleet down
 | `cwd` | 否 | 实例的工作目录（不存在时自动创建） |
 | `env` | 否 | 额外的环境变量，以键值对形式 |
 | `args` | 否 | 传递给 `claude` 的额外 CLI 参数 |
+| `tasks` | 否 | Worker 的初始任务队列（master 模式下使用） |
+
+### 任务队列（Master 模式）
+
+在 master 模式下，每个 worker 拥有独立的任务队列。可在配置中定义初始任务：
+
+```json
+{
+  "name": "opus-worker",
+  "apiKey": "sk-ant-xxx",
+  "model": "claude-opus-4-6",
+  "cwd": "./workspace/opus",
+  "tasks": [
+    "分析项目架构，输出设计文档",
+    "重构 src/core.js 为模块化结构",
+    "编写核心模块的单元测试"
+  ]
+}
+```
+
+Worker 按顺序执行任务。当一个任务完成时（Claude Code 的 `Stop` hook 触发），master 自动下发队列中的下一个任务。如果队列为空，worker 进入空闲状态。
+
+运行时可通过以下方式动态追加任务：
+- TUI：选中 worker，按 Enter，输入任务描述
+- CLI：`fleet task add opus-worker "修复认证模块"`
 
 ### 示例
 
