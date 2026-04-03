@@ -5,14 +5,21 @@
       "apiKey": "sk-ant-api03-xxxxx",
       "model": "claude-opus-4-6",
       "apiBaseUrl": "https://api.anthropic.com",
-      "cwd": "./workspace/opus"
+      "cwd": "./workspace/opus",
+      "tasks": [
+        "Analyze project architecture and output a design document"
+      ]
     },
     {
       "name": "sonnet-worker",
       "apiKey": "sk-ant-api03-yyyyy",
       "model": "claude-sonnet-4-6",
       "apiBaseUrl": "https://api.anthropic.com",
-      "cwd": "./workspace/sonnet"
+      "cwd": "./workspace/sonnet",
+      "tasks": [
+        "Implement the API interface layer",
+        "Write integration tests for the API"
+      ]
     },
     {
       "name": "haiku-worker",
