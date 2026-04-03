@@ -1,74 +1,113 @@
 # Claude Code Fleet
 
-Run multiple Claude Code instances with different API keys, models, and endpoints in parallel — managed through tmux.
+<!-- README-I18N:START -->
+
+**English** | [汉语](./README.zh.md)
+
+<!-- README-I18N:END -->
+
+Run multiple Claude Code instances with different API keys, models, and endpoints in parallel — from one terminal, zero dependencies.
 
 ## Why
-
-When you need to:
 
 - Run multiple Claude Code workers simultaneously (e.g., Opus for architecture, Sonnet for implementation, Haiku for quick tasks)
 - Use different API keys to distribute rate limits
 - Route requests through different endpoints or proxies
-- Manage it all from one terminal
+- Manage it all from one terminal with no external dependencies
 
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) >= 18
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) (`npm install -g @anthropic-ai/claude-code`)
-- [tmux](https://github.com/tmux/tmux)
 
 ## Quick Start
 
 ```bash
-# Clone the repo
+# Install globally
+npm install -g claude-code-fleet
+
+# Or run directly from source
 git clone https://github.com/<your-username>/claude-code-fleet.git
 cd claude-code-fleet
 
-# Initialize config (creates fleet.config.json from template)
-node src/index.js init
+# Add a model profile (interactive)
+fleet model add
 
-# Edit with your API keys and model preferences
-# Or manually: cp fleet.config.example.json fleet.config.json
+# Run a single instance (interactive picker)
+fleet run
 
-# Launch the fleet
-node src/index.js up
+# Or initialize fleet config for multi-instance management
+fleet init
+# Edit fleet.config.json with your API keys, then:
+fleet up
 
-# Attach to the tmux session
-node src/index.js attach
+# List running instances
+fleet ls
+
+# Stop all instances
+fleet down
 ```
+
+## Two Modes
+
+### Model Profile Mode
+
+Manage named model profiles and launch single interactive Claude Code sessions.
+
+- Profiles are stored globally at `~/.config/claude-code-fleet/models.json`
+- `fleet run` launches a foreground interactive session with `stdio` inherited
+- If no `--model` flag is given, an interactive arrow-key menu appears
+
+### Fleet Mode
+
+Define multiple instances in a config file and manage them as background processes.
+
+- `fleet up` spawns each instance as a detached background process
+- PIDs are tracked in `~/.config/claude-code-fleet/fleet-state.json`
+- Stale entries (dead PIDs) are cleaned up automatically
 
 ## Commands
 
-```
-fleet up                          Start all instances
-fleet up --only opus,sonnet       Start only named instances
-fleet up --config ~/my-fleet.json Use specific config file
-fleet down                        Stop the fleet
-fleet restart                     Restart the fleet
-fleet restart --only sonnet       Restart specific instances
-fleet ls                          List running instances
-fleet status                      Show detailed instance configs
-fleet attach                      Attach to the tmux session
-fleet init                        Create fleet.config.json from template
-```
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `fleet run` | — | Start a single interactive Claude Code session with a model profile |
+| `fleet model add` | — | Interactively add a new model profile |
+| `fleet model list` | `model ls` | List all saved model profiles |
+| `fleet model edit` | — | Interactively edit an existing model profile |
+| `fleet model delete` | `model rm` | Interactively delete a model profile |
+| `fleet up` | `start` | Launch all (or `--only`) instances as background processes |
+| `fleet down` | `stop` | Stop all running background instances |
+| `fleet restart` | — | Stop then start all (or `--only`) instances |
+| `fleet ls` | `list` | List currently running background instances with PID and model |
+| `fleet status` | — | Show detailed configuration for all instances |
+| `fleet init` | — | Create `fleet.config.json` from template in the current directory |
+
+### Global Options
+
+| Flag | Description |
+|------|-------------|
+| `--config <path>` | Use a specific config file instead of auto-searching |
+| `--only <names>` | Target only specific named instances (comma-separated, for `up`/`restart`) |
+| `--model <name>` | Specify model profile (for `run` command) |
+| `--cwd <path>` | Set working directory (for `run` command) |
 
 ## Configuration
 
 ### Config file search order
 
-1. `fleet.config.local.json` (gitignored, for local overrides)
-2. `fleet.config.json`
-3. `~/.config/claude-code-fleet/config.json`
+1. `fleet.config.local.json` in the current directory (gitignored, for local secrets)
+2. `fleet.config.json` in the current directory
+3. `~/.config/claude-code-fleet/config.json` (global fallback)
 
 ### Instance options
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `name` | Yes | Instance name (used as tmux window name) |
-| `apiKey` | Yes | Anthropic API key (`ANTHROPIC_API_KEY`) |
-| `model` | No | Model to use (e.g., `claude-opus-4-6`, `claude-sonnet-4-6`) |
-| `apiBaseUrl` | No | Custom API endpoint (`ANTHROPIC_BASE_URL`) |
-| `cwd` | No | Working directory for the instance |
+| `name` | Yes | Unique instance name |
+| `apiKey` | Yes | Anthropic API key (set as `ANTHROPIC_AUTH_TOKEN`) |
+| `model` | No | Claude model ID (e.g., `claude-opus-4-6`, `claude-sonnet-4-6`) |
+| `apiBaseUrl` | No | Custom API endpoint (set as `ANTHROPIC_BASE_URL`) |
+| `cwd` | No | Working directory for the instance (created if missing) |
 | `env` | No | Additional environment variables as key-value pairs |
 | `args` | No | Extra CLI arguments passed to `claude` |
 
@@ -99,41 +138,26 @@ fleet init                        Create fleet.config.json from template
       "args": ["--verbose"],
       "cwd": "./workspace/custom"
     }
-  ],
-  "tmux": {
-    "sessionName": "claude-fleet",
-    "layout": "tiled"
-  }
+  ]
 }
 ```
-
-### Tmux options
-
-| Field | Default | Description |
-|-------|---------|-------------|
-| `sessionName` | `claude-fleet` | tmux session name |
-| `layout` | `tiled` | tmux layout (`tiled`, `even-horizontal`, `even-vertical`, `main-horizontal`) |
 
 ## How It Works
 
 1. Reads config file for instance definitions
 2. Validates configuration (required fields, duplicate names)
-3. Checks for `tmux` and `claude` CLI dependencies
-4. Creates a tmux session with one window per instance
-5. Each window launches `claude` with the configured model and environment
-6. All instances run in parallel within the tmux session
+3. Checks for `claude` CLI availability
+4. Spawns each instance as a detached background process with the configured model and environment
+5. Tracks PIDs in a state file for lifecycle management
+6. Automatically cleans up stale entries on every operation
 
-## Tmux Quick Reference
+## Interactive UI
 
-```bash
-tmux attach -t claude-fleet   # Attach to fleet
+The built-in arrow-key selector supports:
 
-# Inside tmux:
-Ctrl+b n    # Next window
-Ctrl+b p    # Previous window
-Ctrl+b 0-9  # Jump to window by number
-Ctrl+b d    # Detach (fleet keeps running)
-```
+- Arrow keys or `j`/`k` to navigate
+- Enter to confirm selection
+- `q` or `Ctrl+C` to abort
 
 ## License
 

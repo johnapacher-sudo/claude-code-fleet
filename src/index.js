@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 
-const { execFileSync, spawnSync, spawn } = require('child_process');
+const { spawnSync, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const readline = require('readline');
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const CONFIG_FILENAME = 'fleet.config.json';
 const LOCAL_CONFIG_FILENAME = 'fleet.config.local.json';
 const GLOBAL_CONFIG_DIR = path.join(process.env.HOME || '~', '.config', 'claude-code-fleet');
+const STATE_FILE = path.join(GLOBAL_CONFIG_DIR, 'fleet-state.json');
 
 const ANSI = {
   bold: s => `\x1b[1m${s}\x1b[0m`,
@@ -21,22 +23,6 @@ const ANSI = {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function tmuxRaw(args) {
-  try {
-    return execFileSync('tmux', args, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
-  } catch {
-    return null;
-  }
-}
-
-function tmux(...args) {
-  return tmuxRaw(args);
-}
-
-function tmuxSessionAlive(sessionName) {
-  return tmux('has-session', '-t', sessionName) !== null;
-}
-
 function run(cmd, args) {
   const r = spawnSync(cmd, args, { encoding: 'utf-8', stdio: 'pipe' });
   return r.status === 0;
@@ -45,14 +31,49 @@ function run(cmd, args) {
 // ─── Dependency checks ───────────────────────────────────────────────────────
 
 function checkDeps() {
-  const missing = [];
-  if (!run('which', ['tmux'])) missing.push('tmux');
-  if (!run('which', ['claude'])) missing.push('claude (Claude Code CLI)');
-  if (missing.length > 0) {
-    console.error(ANSI.red('Missing dependencies:'));
-    missing.forEach(d => console.error(`  - ${d}`));
+  if (!run('which', ['claude'])) {
+    console.error(ANSI.red('Missing dependency: claude (Claude Code CLI)'));
     process.exit(1);
   }
+}
+
+// ─── Fleet state (PID tracking) ─────────────────────────────────────────────
+
+function loadState() {
+  if (!fs.existsSync(STATE_FILE)) return { instances: {} };
+  try {
+    return JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8'));
+  } catch {
+    return { instances: {} };
+  }
+}
+
+function saveState(state) {
+  const dir = path.dirname(STATE_FILE);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2) + '\n');
+}
+
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function cleanupState() {
+  const state = loadState();
+  let changed = false;
+  for (const name of Object.keys(state.instances)) {
+    const pid = state.instances[name].pid;
+    if (!isProcessAlive(pid)) {
+      delete state.instances[name];
+      changed = true;
+    }
+  }
+  if (changed) saveState(state);
 }
 
 // ─── Config ──────────────────────────────────────────────────────────────────
@@ -130,6 +151,270 @@ function validateConfig(config) {
   return errors;
 }
 
+// ─── Model profiles ──────────────────────────────────────────────────────────
+
+function getModelsPath() {
+  return path.join(GLOBAL_CONFIG_DIR, 'models.json');
+}
+
+function loadModels() {
+  const p = getModelsPath();
+  if (!fs.existsSync(p)) return { models: [] };
+  try {
+    return JSON.parse(fs.readFileSync(p, 'utf-8'));
+  } catch {
+    return { models: [] };
+  }
+}
+
+function saveModels(data) {
+  const dir = path.dirname(getModelsPath());
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(getModelsPath(), JSON.stringify(data, null, 2) + '\n');
+}
+
+// ─── Interactive helpers ─────────────────────────────────────────────────────
+
+function ask(question) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise(resolve => {
+    rl.question(question, answer => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
+}
+
+function selectFromList(items, label) {
+  return new Promise(resolve => {
+    if (items.length === 0) {
+      console.error(ANSI.yellow('No items to select.'));
+      process.exit(1);
+    }
+
+    let selected = 0;
+
+    function render() {
+      // Move cursor up to redraw
+      if (process.stdout.isTTY) {
+        process.stdout.write('\x1b[' + (items.length + 1) + 'A');
+      }
+      process.stdout.write(`\x1b[0J? ${label}:\n`);
+      items.forEach((item, i) => {
+        const marker = i === selected ? '\x1b[36m❯\x1b[0m' : ' ';
+        const line = i === selected ? `\x1b[36m${item.display}\x1b[0m` : item.display;
+        process.stdout.write(`  ${marker} ${line}\n`);
+      });
+    }
+
+    // Initial render
+    process.stdout.write(`\n? ${label}:\n`);
+    items.forEach((item, i) => {
+      const marker = i === 0 ? '\x1b[36m❯\x1b[0m' : ' ';
+      const line = i === 0 ? `\x1b[36m${item.display}\x1b[0m` : item.display;
+      process.stdout.write(`  ${marker} ${line}\n`);
+    });
+
+    const stdin = process.stdin;
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.setEncoding('utf-8');
+
+    function cleanup() {
+      stdin.setRawMode(false);
+      stdin.pause();
+      stdin.removeListener('data', onData);
+    }
+
+    function onData(key) {
+      if (key === '\x1b[A' || key === 'k') {
+        // Up
+        selected = (selected - 1 + items.length) % items.length;
+        render();
+      } else if (key === '\x1b[B' || key === 'j') {
+        // Down
+        selected = (selected + 1) % items.length;
+        render();
+      } else if (key === '\r' || key === '\n') {
+        // Enter
+        cleanup();
+        // Clear the list, print final selection
+        process.stdout.write('\x1b[' + (items.length + 1) + 'A');
+        process.stdout.write('\x1b[0J');
+        process.stdout.write(`\x1b[36m❯\x1b[0m ${items[selected].display}\n`);
+        resolve(items[selected].value);
+      } else if (key === '\x03' || key === 'q') {
+        // Ctrl+C or q
+        cleanup();
+        process.stdout.write('\n');
+        process.exit(1);
+      }
+    }
+
+    stdin.on('data', onData);
+  });
+}
+
+// ─── Model commands ──────────────────────────────────────────────────────────
+
+async function cmdModelAdd() {
+  console.log(ANSI.bold('\nAdd a new model profile\n'));
+
+  const name = await ask('  Name (e.g. opus-prod): ');
+  if (!name) {
+    console.error(ANSI.red('Name is required.'));
+    process.exit(1);
+  }
+
+  const data = loadModels();
+  if (data.models.some(m => m.name === name)) {
+    console.error(ANSI.red(`Model "${name}" already exists.`));
+    process.exit(1);
+  }
+
+  const model = await ask('  Model ID (e.g. claude-opus-4-6): ');
+  const apiKey = await ask('  API Key: ');
+  const apiBaseUrl = await ask('  API Base URL (leave empty for default): ');
+
+  const entry = { name };
+  if (model) entry.model = model;
+  if (apiKey) entry.apiKey = apiKey;
+  if (apiBaseUrl) entry.apiBaseUrl = apiBaseUrl;
+
+  data.models.push(entry);
+  saveModels(data);
+  console.log(ANSI.green(`\n  Model "${name}" added.`));
+}
+
+function cmdModelList() {
+  const data = loadModels();
+  if (data.models.length === 0) {
+    console.log(ANSI.yellow('No model profiles configured.'));
+    console.log(`Run ${ANSI.bold('fleet model add')} to create one.`);
+    return;
+  }
+  console.log(ANSI.bold('\nModel Profiles:\n'));
+  for (const m of data.models) {
+    console.log(`  ${ANSI.green(m.name)}`);
+    console.log(`    model:    ${ANSI.cyan(m.model || 'default')}`);
+    console.log(`    apiKey:   ${m.apiKey ? m.apiKey.slice(0, 12) + '...' : 'not set'}`);
+    if (m.apiBaseUrl) console.log(`    endpoint: ${m.apiBaseUrl}`);
+    console.log();
+  }
+}
+
+async function cmdModelEdit() {
+  const data = loadModels();
+  if (data.models.length === 0) {
+    console.error(ANSI.yellow('No model profiles to edit.'));
+    return;
+  }
+
+  const items = data.models.map(m => ({
+    display: `${m.name} (${m.model || 'default'})`,
+    value: m.name,
+  }));
+  const selected = await selectFromList(items, 'Select a model to edit');
+  const entry = data.models.find(m => m.name === selected);
+
+  console.log(`\nEditing ${ANSI.green(selected)}. Press Enter to keep current value.\n`);
+
+  const newName = await ask(`  Name [${entry.name}]: `);
+  const model = await ask(`  Model ID [${entry.model || ''}]: `);
+  const apiKey = await ask(`  API Key [${entry.apiKey ? entry.apiKey.slice(0, 12) + '...' : ''}]: `);
+  const apiBaseUrl = await ask(`  API Base URL [${entry.apiBaseUrl || ''}]: `);
+
+  if (newName && newName !== entry.name) {
+    if (data.models.some(m => m.name === newName)) {
+      console.error(ANSI.red(`Name "${newName}" already exists.`));
+      process.exit(1);
+    }
+    entry.name = newName;
+  }
+  if (model) entry.model = model;
+  if (apiKey) entry.apiKey = apiKey;
+  if (apiBaseUrl) entry.apiBaseUrl = apiBaseUrl;
+
+  saveModels(data);
+  console.log(ANSI.green(`\n  Model "${selected}" updated.`));
+}
+
+async function cmdModelDelete() {
+  const data = loadModels();
+  if (data.models.length === 0) {
+    console.error(ANSI.yellow('No model profiles to delete.'));
+    return;
+  }
+
+  const items = data.models.map(m => ({
+    display: `${m.name} (${m.model || 'default'})`,
+    value: m.name,
+  }));
+  const selected = await selectFromList(items, 'Select a model to delete');
+
+  const confirm = await ask(`  Delete "${selected}"? (y/N): `);
+  if (confirm.toLowerCase() !== 'y') {
+    console.log(ANSI.dim('  Cancelled.'));
+    return;
+  }
+
+  data.models = data.models.filter(m => m.name !== selected);
+  saveModels(data);
+  console.log(ANSI.green(`  Model "${selected}" deleted.`));
+}
+
+// ─── Run command ─────────────────────────────────────────────────────────────
+
+async function cmdRun(modelName, cwd) {
+  checkDeps();
+
+  const data = loadModels();
+  if (data.models.length === 0) {
+    console.error(ANSI.yellow('No model profiles configured.'));
+    console.error(`Run ${ANSI.bold('fleet model add')} to create one.`);
+    process.exit(1);
+  }
+
+  let entry;
+  if (modelName) {
+    entry = data.models.find(m => m.name === modelName);
+    if (!entry) {
+      console.error(ANSI.red(`Model "${modelName}" not found.`));
+      console.error(`Available: ${data.models.map(m => m.name).join(', ')}`);
+      process.exit(1);
+    }
+  } else {
+    const items = data.models.map(m => ({
+      display: `${m.name} (${ANSI.cyan(m.model || 'default')})`,
+      value: m.name,
+    }));
+    const selected = await selectFromList(items, 'Select a model to run');
+    entry = data.models.find(m => m.name === selected);
+  }
+
+  const workDir = cwd ? path.resolve(cwd) : process.cwd();
+  if (!fs.existsSync(workDir)) fs.mkdirSync(workDir, { recursive: true });
+
+  // Build settings override — all config through claude's own mechanism
+  const settingsEnv = {};
+  if (entry.apiKey) {
+    settingsEnv.ANTHROPIC_AUTH_TOKEN = entry.apiKey;
+    settingsEnv.ANTHROPIC_API_KEY = '';
+  }
+  if (entry.apiBaseUrl) settingsEnv.ANTHROPIC_BASE_URL = entry.apiBaseUrl;
+
+  const claudeArgs = ['--dangerously-skip-permissions'];
+  if (entry.model) claudeArgs.push('--model', entry.model);
+  claudeArgs.push('--settings', JSON.stringify({ env: settingsEnv }));
+  console.log(ANSI.dim(`\n  Launching claude with model: ${entry.model || 'default'} (${entry.name})\n`));
+
+  const child = spawn('claude', claudeArgs, {
+    cwd: workDir,
+    stdio: 'inherit',
+  });
+  child.on('exit', code => process.exit(code || 0));
+}
+
 // ─── Config init ─────────────────────────────────────────────────────────────
 
 function cmdInit() {
@@ -154,7 +439,7 @@ function cmdInit() {
 
   fs.writeFileSync(target, template);
   console.log(ANSI.green(`Created ${target}`));
-  console.log(`Edit it with your API keys and model preferences.`);
+  console.log('Edit it with your API keys and model preferences.');
 }
 
 // ─── Instance filtering ──────────────────────────────────────────────────────
@@ -174,131 +459,113 @@ function filterInstances(instances, onlyNames) {
   return filtered;
 }
 
-// ─── Instance launcher ───────────────────────────────────────────────────────
-
-function launchInstance(inst, sessionName, isFirst) {
-  const paneName = inst.name;
-  const cwd = inst.cwd ? path.resolve(inst.cwd) : process.cwd();
-
-  // Ensure working directory exists
-  if (!fs.existsSync(cwd)) {
-    fs.mkdirSync(cwd, { recursive: true });
-  }
-
-  // Create or reuse tmux window
-  if (isFirst) {
-    tmux('rename-window', '-t', `${sessionName}:0`, paneName);
-  } else {
-    tmux('new-window', '-t', sessionName, '-n', paneName);
-  }
-
-  const target = `${sessionName}:${paneName}`;
-
-  // Build env file for this instance
-  const envLines = [
-    inst.apiKey ? `export ANTHROPIC_API_KEY=${inst.apiKey}` : '',
-    inst.apiBaseUrl ? `export ANTHROPIC_BASE_URL=${inst.apiBaseUrl}` : '',
-    ...(inst.env ? Object.entries(inst.env).map(([k, v]) => `export ${k}=${v}`) : []),
-  ].filter(Boolean);
-
-  if (envLines.length > 0) {
-    const envFile = path.join(cwd, '.fleet-env');
-    fs.writeFileSync(envFile, envLines.join('\n') + '\n');
-  }
-
-  // Build claude CLI args
-  const claudeArgs = [];
-  if (inst.model) claudeArgs.push('--model', inst.model);
-  if (inst.apiBaseUrl) claudeArgs.push('--api-base-url', inst.apiBaseUrl);
-  if (inst.args) claudeArgs.push(...inst.args);
-
-  // Send commands to tmux pane
-  tmux('send-keys', '-t', target, `cd ${cwd}`, 'C-m');
-
-  if (envLines.length > 0) {
-    tmux('send-keys', '-t', target, 'source .fleet-env', 'C-m');
-  }
-
-  tmux('send-keys', '-t', target, ['claude', ...claudeArgs].join(' '), 'C-m');
-
-  return target;
-}
-
-// ─── Commands ────────────────────────────────────────────────────────────────
+// ─── Fleet commands ──────────────────────────────────────────────────────────
 
 function cmdUp(config, onlyNames) {
-  const sessionName = config.tmux?.sessionName || 'claude-fleet';
-  const layout = config.tmux?.layout || 'tiled';
-
   checkDeps();
+  cleanupState();
 
-  if (tmuxSessionAlive(sessionName)) {
-    console.error(ANSI.yellow(`Fleet "${sessionName}" is already running. Use ${ANSI.bold('fleet down')} first or ${ANSI.bold('fleet restart')}.`));
-    process.exit(1);
-  }
-
-  tmux('new-session', '-d', '-s', sessionName);
-
+  const state = loadState();
   const instances = filterInstances(config.instances, onlyNames);
 
-  instances.forEach((inst, i) => {
-    launchInstance(inst, sessionName, i === 0);
-    console.log(ANSI.green(`  [${inst.name}]`) + ` model=${ANSI.cyan(inst.model || 'default')}`);
-  });
+  for (const inst of instances) {
+    if (state.instances[inst.name] && isProcessAlive(state.instances[inst.name].pid)) {
+      console.log(ANSI.yellow(`  [${inst.name}] already running (pid ${state.instances[inst.name].pid})`));
+      continue;
+    }
 
-  tmux('select-layout', '-t', sessionName, layout);
+    const cwd = inst.cwd ? path.resolve(inst.cwd) : process.cwd();
+    if (!fs.existsSync(cwd)) fs.mkdirSync(cwd, { recursive: true });
 
-  console.log(`\nFleet ${ANSI.bold(sessionName)} launched with ${instances.length} instances.`);
-  console.log(ANSI.dim(`  Attach:  tmux attach -t ${sessionName}`));
-  console.log(ANSI.dim(`  List:    fleet ls`));
-  console.log(ANSI.dim(`  Stop:    fleet down`));
-}
+    const env = { ...process.env };
+    if (inst.env) Object.assign(env, inst.env);
 
-function cmdDown(config) {
-  const sessionName = config.tmux?.sessionName || 'claude-fleet';
-  if (tmuxSessionAlive(sessionName)) {
-    tmux('kill-session', '-t', sessionName);
-    console.log(ANSI.green(`Fleet "${sessionName}" stopped.`));
-  } else {
-    console.log(ANSI.yellow(`Fleet "${sessionName}" is not running.`));
+    const claudeSettingsEnv = {};
+    if (inst.apiKey) {
+      claudeSettingsEnv.ANTHROPIC_AUTH_TOKEN = inst.apiKey;
+      claudeSettingsEnv.ANTHROPIC_API_KEY = '';
+    }
+    if (inst.apiBaseUrl) claudeSettingsEnv.ANTHROPIC_BASE_URL = inst.apiBaseUrl;
+
+    const claudeArgs = ['--dangerously-skip-permissions'];
+    if (inst.model) claudeArgs.push('--model', inst.model);
+    if (inst.args) claudeArgs.push(...inst.args);
+    if (Object.keys(claudeSettingsEnv).length > 0) {
+      claudeArgs.push('--settings', JSON.stringify({ env: claudeSettingsEnv }));
+    }
+
+    const child = spawn('claude', claudeArgs, {
+      cwd,
+      env,
+      stdio: 'ignore',
+      detached: true,
+    });
+    child.unref();
+
+    state.instances[inst.name] = {
+      pid: child.pid,
+      model: inst.model || 'default',
+      cwd,
+      startedAt: new Date().toISOString(),
+    };
+
+    console.log(ANSI.green(`  [${inst.name}]`) + ` model=${ANSI.cyan(inst.model || 'default')} pid=${child.pid}`);
   }
+
+  saveState(state);
+  console.log(`\nFleet launched with ${instances.length} instance(s).`);
+  console.log(ANSI.dim('  fleet ls       # List running instances'));
+  console.log(ANSI.dim('  fleet down     # Stop all instances'));
 }
 
-function cmdRestart(config, onlyNames) {
-  cmdDown(config);
-  cmdUp(config, onlyNames);
-}
-
-function cmdLs(config) {
-  const sessionName = config.tmux?.sessionName || 'claude-fleet';
-  if (!tmuxSessionAlive(sessionName)) {
-    console.log(ANSI.yellow(`Fleet "${sessionName}" is not running.`));
+function cmdDown() {
+  cleanupState();
+  const state = loadState();
+  const names = Object.keys(state.instances);
+  if (names.length === 0) {
+    console.log(ANSI.yellow('No running instances.'));
     return;
   }
 
-  const output = tmux('list-windows', '-t', sessionName, '-F', '#{window_index}::#{window_name}::#{window_active}');
-  if (!output) return;
+  for (const name of names) {
+    const pid = state.instances[name].pid;
+    try {
+      process.kill(pid, 'SIGTERM');
+      console.log(ANSI.green(`  [${name}] stopped (pid ${pid})`));
+    } catch {
+      console.log(ANSI.yellow(`  [${name}] already exited`));
+    }
+  }
 
-  console.log(`Fleet ${ANSI.bold(sessionName)} instances:\n`);
+  state.instances = {};
+  saveState(state);
+  console.log('\nFleet stopped.');
+}
 
-  for (const line of output.trim().split('\n')) {
-    const [idx, name, active] = line.split('::');
-    const marker = active === '1' ? ANSI.green('*') : ' ';
-    console.log(`  ${marker} [${idx}] ${name}`);
+function cmdRestart(config, onlyNames) {
+  cmdDown();
+  cmdUp(config, onlyNames);
+}
+
+function cmdLs() {
+  cleanupState();
+  const state = loadState();
+  const names = Object.keys(state.instances);
+  if (names.length === 0) {
+    console.log(ANSI.yellow('No running instances.'));
+    return;
+  }
+
+  console.log(ANSI.bold('\nRunning instances:\n'));
+  for (const name of names) {
+    const inst = state.instances[name];
+    console.log(`  ${ANSI.green(name)}  model=${ANSI.cyan(inst.model)}  pid=${inst.pid}`);
   }
 }
 
 function cmdStatus(config) {
-  const sessionName = config.tmux?.sessionName || 'claude-fleet';
-  if (!tmuxSessionAlive(sessionName)) {
-    console.log(ANSI.yellow(`Fleet "${sessionName}" is not running.`));
-    return;
-  }
-
-  const instances = config.instances;
   console.log(`${ANSI.bold('Instance Configs:')}\n`);
-
-  for (const inst of instances) {
+  for (const inst of config.instances) {
     const cwd = inst.cwd ? path.resolve(inst.cwd) : process.cwd();
     console.log(`  ${ANSI.green(inst.name)}`);
     console.log(`    model:    ${ANSI.cyan(inst.model || 'default')}`);
@@ -309,16 +576,6 @@ function cmdStatus(config) {
     }
     console.log();
   }
-}
-
-function cmdAttach(config) {
-  const sessionName = config.tmux?.sessionName || 'claude-fleet';
-  if (!tmuxSessionAlive(sessionName)) {
-    console.error(ANSI.yellow(`Fleet "${sessionName}" is not running. Start it with ${ANSI.bold('fleet up')}.`));
-    process.exit(1);
-  }
-  const child = spawn('tmux', ['attach', '-t', sessionName], { stdio: 'inherit' });
-  child.on('exit', code => process.exit(code || 0));
 }
 
 // ─── CLI ─────────────────────────────────────────────────────────────────────
@@ -333,6 +590,10 @@ function parseArgs(argv) {
       opts.config = argv[++i];
     } else if (arg === '--only' && argv[i + 1]) {
       opts.only = argv[++i].split(',');
+    } else if (arg === '--model' && argv[i + 1]) {
+      opts.model = argv[++i];
+    } else if (arg === '--cwd' && argv[i + 1]) {
+      opts.cwd = argv[++i];
     } else if (arg === '--help' || arg === '-h') {
       opts.help = true;
     } else {
@@ -340,48 +601,88 @@ function parseArgs(argv) {
     }
     i++;
   }
-  return { command: positional[0] || 'up', args: positional.slice(1), opts };
+  return { command: positional[0] || 'help', subcommand: positional[1], args: positional.slice(2), opts };
 }
 
 function printHelp() {
-  console.log(`${ANSI.bold('Claude Code Fleet')} — Run multiple Claude Code instances in parallel
+  console.log(`${ANSI.bold('Claude Code Fleet')} — Manage model profiles and run Claude Code
 
 ${ANSI.bold('Usage:')}
   fleet [command] [options]
 
 ${ANSI.bold('Commands:')}
-  up, start     Start all (or filtered) Claude Code instances
-  down, stop    Stop the fleet
-  restart       Restart the fleet
-  ls, list      List running instances
-  status        Show instance configuration details
-  attach        Attach to the tmux session
-  init          Create a fleet.config.json from template
+  run                 Start Claude Code with a model profile
+  model add           Add a new model profile
+  model list          List all model profiles
+  model edit          Edit a model profile (interactive)
+  model delete        Delete a model profile (interactive)
+  up                  Start instances from config (background)
+  down                Stop all background instances
+  restart             Restart instances
+  ls                  List running instances
+  status              Show instance configuration details
+  init                Create a fleet.config.json from template
 
 ${ANSI.bold('Options:')}
   --config <path>   Use specific config file
   --only <names>    Comma-separated instance names to target
+  --model <name>    Model profile name (for run command)
+  --cwd <path>      Working directory (for run command)
   -h, --help        Show this help
 
 ${ANSI.bold('Examples:')}
-  fleet up                          # Start all instances
-  fleet up --only opus,sonnet       # Start only named instances
-  fleet up --config ~/my-fleet.json # Use specific config
-  fleet restart --only sonnet       # Restart a specific instance
-  fleet attach                      # Jump into tmux session
+  fleet model add                   # Add a model profile interactively
+  fleet model list                  # List all model profiles
+  fleet run                         # Select model and start Claude Code
+  fleet run --model opus-prod       # Start with a specific model profile
+  fleet run --model sonnet --cwd .  # Start with model and working directory
+  fleet up                          # Start all instances (background)
+  fleet ls                          # List running instances
 `);
 }
 
 function main() {
-  const { command, opts } = parseArgs(process.argv.slice(2));
+  const { command, subcommand, opts } = parseArgs(process.argv.slice(2));
 
-  if (opts.help) {
+  if (opts.help || command === 'help') {
     printHelp();
     process.exit(0);
   }
 
   if (command === 'init') {
     cmdInit();
+    return;
+  }
+
+  // Model management commands (don't need fleet config)
+  if (command === 'model') {
+    const modelCmd = subcommand || 'list';
+    switch (modelCmd) {
+      case 'add':
+        cmdModelAdd();
+        break;
+      case 'list':
+      case 'ls':
+        cmdModelList();
+        break;
+      case 'edit':
+        cmdModelEdit();
+        break;
+      case 'delete':
+      case 'rm':
+        cmdModelDelete();
+        break;
+      default:
+        console.error(ANSI.red(`Unknown model command: ${modelCmd}`));
+        console.error('Available: add, list, edit, delete');
+        process.exit(1);
+    }
+    return;
+  }
+
+  // Run command (doesn't need fleet config)
+  if (command === 'run') {
+    cmdRun(opts.model, opts.cwd);
     return;
   }
 
@@ -394,21 +695,17 @@ function main() {
       break;
     case 'down':
     case 'stop':
-      cmdDown(config);
+      cmdDown();
       break;
     case 'restart':
       cmdRestart(config, opts.only);
       break;
     case 'ls':
     case 'list':
-      cmdLs(config);
+      cmdLs();
       break;
     case 'status':
       cmdStatus(config);
-      break;
-    case 'attach':
-    case 'a':
-      cmdAttach(config);
       break;
     default:
       console.error(ANSI.red(`Unknown command: ${command}`));

@@ -31,9 +31,5 @@
       },
       "args": ["--verbose"]
     }
-  ],
-  "tmux": {
-    "sessionName": "claude-fleet",
-    "layout": "tiled"
-  }
+  ]
 }
