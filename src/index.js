@@ -601,7 +601,7 @@ function parseArgs(argv) {
     }
     i++;
   }
-  return { command: positional[0] || 'help', subcommand: positional[1], args: positional.slice(2), opts };
+  return { command: positional[0] || 'run', subcommand: positional[1], args: positional.slice(2), opts };
 }
 
 function printHelp() {
