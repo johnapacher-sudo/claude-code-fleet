@@ -1,5 +1,5 @@
 {
-  "name": "claude-code-fleet",
+  "name": "@dking/claude-code-fleet",
   "version": "1.0.0",
   "description": "Run multiple Claude Code instances with different API keys and models in parallel",
   "main": "src/index.js",

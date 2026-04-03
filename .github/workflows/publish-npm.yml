@@ -1,0 +1,58 @@
+name: Publish to npm
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Check version changed
+        id: version
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG="v${PKG_VERSION}"
+          # 检查该 tag 是否已存在
+          if git tag -l "$TAG" | grep -q "$TAG"; then
+            echo "Tag $TAG already exists, skipping publish"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "New version detected: $TAG"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create tag and publish
+        if: steps.version.outputs.changed == 'true'
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG"
+          git push origin "$TAG"
+          npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

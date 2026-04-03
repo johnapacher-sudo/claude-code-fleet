@@ -24,7 +24,7 @@
 
 ```bash
 # 全局安装
-npm install -g claude-code-fleet
+npm install -g @dking/claude-code-fleet
 
 # 或直接从源码运行
 git clone https://github.com/<your-username>/claude-code-fleet.git

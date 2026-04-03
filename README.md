@@ -24,7 +24,7 @@ Run multiple Claude Code instances with different API keys, models, and endpoint
 
 ```bash
 # Install globally
-npm install -g claude-code-fleet
+npm install -g @dking/claude-code-fleet
 
 # Or run directly from source
 git clone https://github.com/<your-username>/claude-code-fleet.git
