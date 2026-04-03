@@ -1,0 +1,6 @@
+node_modules/
+fleet.config.json
+fleet.config.local.json
+.fleet-env
+*.log
+.DS_Store
