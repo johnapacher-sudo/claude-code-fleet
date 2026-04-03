@@ -1,6 +1,6 @@
 {
   "name": "@dking/claude-code-fleet",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Run multiple Claude Code instances with different API keys and models in parallel",
   "main": "src/index.js",
   "bin": {
@@ -10,7 +10,13 @@
     "start": "node src/index.js",
     "fleet": "node src/index.js"
   },
-  "keywords": ["claude", "claude-code", "multi-instance", "parallel", "fleet"],
+  "keywords": [
+    "claude",
+    "claude-code",
+    "multi-instance",
+    "parallel",
+    "fleet"
+  ],
   "license": "MIT",
   "dependencies": {},
   "engines": {
