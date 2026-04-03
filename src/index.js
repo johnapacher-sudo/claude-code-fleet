@@ -4,6 +4,8 @@ const { spawnSync, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const readline = require('readline');
+const { Master } = require('./master');
+const { sendToSocket } = require('./socket');
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -578,6 +580,58 @@ function cmdStatus(config) {
   }
 }
 
+// ─── Master commands ─────────────────────────────────────────────────────
+
+function cmdStart(config, onlyNames) {
+  checkDeps();
+
+  const instances = onlyNames
+    ? filterInstances(config.instances, onlyNames)
+    : config.instances;
+
+  const masterConfig = { ...config, instances };
+  const master = new Master(masterConfig);
+
+  process.on('SIGINT', () => {
+    master.tui.stop();
+    master.socketServer.stop();
+    console.log('\nFleet master stopped.');
+    process.exit(0);
+  });
+
+  process.on('SIGTERM', () => {
+    master.tui.stop();
+    master.socketServer.stop();
+    process.exit(0);
+  });
+
+  master.start();
+}
+
+async function cmdTaskAdd(workerName, task) {
+  const sockPath = path.join(GLOBAL_CONFIG_DIR, 'fleet.sock');
+  if (!fs.existsSync(sockPath)) {
+    console.error(ANSI.red('Master is not running. Start with: fleet start'));
+    process.exit(1);
+  }
+
+  try {
+    const resp = await sendToSocket(sockPath, {
+      event: 'TaskAdd',
+      worker: workerName,
+      task,
+    }, 3000);
+    if (resp.ok) {
+      console.log(ANSI.green(`Task added to ${workerName}: ${task}`));
+    } else {
+      console.error(ANSI.red(`Failed: ${resp.error || 'unknown'}`));
+    }
+  } catch {
+    console.error(ANSI.red('Cannot connect to master. Is fleet start running?'));
+    process.exit(1);
+  }
+}
+
 // ─── CLI ─────────────────────────────────────────────────────────────────────
 
 function parseArgs(argv) {
@@ -622,6 +676,8 @@ ${ANSI.bold('Commands:')}
   ls                  List running instances
   status              Show instance configuration details
   init                Create a fleet.config.json from template
+  start               Start master + all workers (with TUI)
+  task add <w> <t>    Add task to a running worker
 
 ${ANSI.bold('Options:')}
   --config <path>   Use specific config file
@@ -638,11 +694,13 @@ ${ANSI.bold('Examples:')}
   fleet run --model sonnet --cwd .  # Start with model and working directory
   fleet up                          # Start all instances (background)
   fleet ls                          # List running instances
+  fleet start                      # Start master with TUI dashboard
+  fleet task add opus-worker "Fix bug in auth"
 `);
 }
 
 function main() {
-  const { command, subcommand, opts } = parseArgs(process.argv.slice(2));
+  const { command, subcommand, args, opts } = parseArgs(process.argv.slice(2));
 
   if (opts.help || command === 'help') {
     printHelp();
@@ -690,7 +748,6 @@ function main() {
 
   switch (command) {
     case 'up':
-    case 'start':
       cmdUp(config, opts.only);
       break;
     case 'down':
@@ -706,6 +763,17 @@ function main() {
       break;
     case 'status':
       cmdStatus(config);
+      break;
+    case 'start':
+      cmdStart(config, opts.only);
+      break;
+    case 'task':
+      if (subcommand === 'add' && args[0] && args[1]) {
+        cmdTaskAdd(args[0], args.slice(1).join(' '));
+      } else {
+        console.error(ANSI.red('Usage: fleet task add <worker-name> <task-description>'));
+        process.exit(1);
+      }
       break;
     default:
       console.error(ANSI.red(`Unknown command: ${command}`));
