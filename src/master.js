@@ -47,23 +47,19 @@ class Master {
     const sid = payload.session_id;
     if (!sid) return;
 
-    // Stop event → complete current round, keep worker
+    // Stop event → close current turn, keep worker
     if (payload.event === 'Stop') {
       if (this.workers.has(sid)) {
         const worker = this.workers.get(sid);
         worker.lastEventAt = Date.now();
         worker.status = 'idle';
-        worker.lastResponse = (payload.last_assistant_message || '').slice(0, 500);
-
-        // Complete current round
-        const round = {
-          actions: [...worker.currentRound.actions],
-          response: worker.lastResponse,
-          endTime: Date.now(),
-        };
-        worker.rounds.push(round);
-        if (worker.rounds.length > 10) worker.rounds.shift();
-        worker.currentRound = { actions: [] };
+        // Close current turn
+        if (worker.currentTurn) {
+          worker.currentTurn.actions.forEach(a => a.status = 'done');
+          worker.turns.push(worker.currentTurn);
+          if (worker.turns.length > 2) worker.turns.shift();
+          worker.currentTurn = null;
+        }
       }
       if (this.tui) this.tui.scheduleRender();
       return;
@@ -81,9 +77,8 @@ class Master {
         firstEventAt: Date.now(),
         lastEventAt: Date.now(),
         status: 'idle',
-        currentRound: { actions: [] },
-        rounds: [],
-        lastResponse: '',
+        turns: [],           // completed turns (max 2)
+        currentTurn: null,   // { summary, summaryTime, actions: [] } or null
       });
     }
 
@@ -98,22 +93,40 @@ class Master {
       }
     }
 
-    // PostToolUse → add action to current round
+    // PostToolUse → add action to current turn
     if (payload.event === 'PostToolUse') {
       worker.status = 'active';
+      // Ensure a current turn exists
+      if (!worker.currentTurn) {
+        worker.currentTurn = { summary: '', summaryTime: Date.now(), actions: [] };
+      }
+      // Mark previous action as done
+      const actions = worker.currentTurn.actions;
+      if (actions.length > 0) {
+        actions[actions.length - 1].status = 'done';
+      }
+      // Add new action as running
       const summary = summarizeToolUse(payload);
-      worker.currentRound.actions.push({ summary, time: Date.now() });
-      if (worker.currentRound.actions.length > 30) worker.currentRound.actions.shift();
+      const parts = summary.split(' ', 2);
+      const tool = parts[0] || summary;
+      const target = parts.length > 1 ? summary.slice(tool.length + 1) : '';
+      actions.push({ tool, target, time: Date.now(), status: 'running' });
     }
 
-    // Notification → record message
+    // Notification → close current turn, start new one
     if (payload.event === 'Notification') {
       worker.status = 'active';
-      worker.currentRound.actions.push({
-        summary: payload.message || 'notification',
-        time: Date.now(),
-      });
-      if (worker.currentRound.actions.length > 30) worker.currentRound.actions.shift();
+      if (worker.currentTurn) {
+        // Close current turn: mark all actions done, set summary
+        worker.currentTurn.actions.forEach(a => a.status = 'done');
+        worker.currentTurn.summary = payload.message || '';
+        worker.currentTurn.summaryTime = Date.now();
+        // Move to turns history (keep max 2)
+        worker.turns.push(worker.currentTurn);
+        if (worker.turns.length > 2) worker.turns.shift();
+      }
+      // Start a new empty current turn
+      worker.currentTurn = { summary: '', summaryTime: Date.now(), actions: [] };
     }
 
     if (this.tui) this.tui.scheduleRender();
