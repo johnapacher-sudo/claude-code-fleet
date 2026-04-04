@@ -2,6 +2,7 @@ import React from 'react';
 import { Box, Text } from 'ink';
 import Spinner from 'ink-spinner';
 import { colors } from './colors.mjs';
+import { TERMINAL_NAMES } from './terminal-focus.mjs';
 
 const h = React.createElement;
 
@@ -145,6 +146,9 @@ export function WorkerCard({ worker, now, isExpanded = false }) {
           : null,
         worker.modelName
           ? h(Text, { color: colors.modelName }, worker.modelName)
+          : null,
+        worker.termProgram
+          ? h(Text, { color: colors.idle }, TERMINAL_NAMES[worker.termProgram] || worker.termProgram)
           : null,
       ),
       h(Text, { color: colors.idle }, elapsed),
