@@ -4,8 +4,8 @@ const { spawnSync, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const readline = require('readline');
+const os = require('os');
 const { Master } = require('./master');
-const { sendToSocket } = require('./socket');
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -410,9 +410,11 @@ async function cmdRun(modelName, cwd) {
   claudeArgs.push('--settings', JSON.stringify({ env: settingsEnv }));
   console.log(ANSI.dim(`\n  Launching claude with model: ${entry.model || 'default'} (${entry.name})\n`));
 
+  const env = { ...process.env, FLEET_MODEL_NAME: entry.name };
   const child = spawn('claude', claudeArgs, {
     cwd: workDir,
     stdio: 'inherit',
+    env,
   });
   child.on('exit', code => process.exit(code || 0));
 }
@@ -544,6 +546,46 @@ function cmdDown() {
   console.log('\nFleet stopped.');
 }
 
+function cmdHooksInstall() {
+  const { ensureHooks } = require('./master');
+  ensureHooks();
+  console.log(ANSI.green('Fleet hooks installed to ~/.claude/settings.json'));
+}
+
+function cmdHooksRemove() {
+  const { removeHooks } = require('./master');
+  removeHooks();
+  console.log(ANSI.green('Fleet hooks removed from ~/.claude/settings.json'));
+}
+
+function cmdHooksStatus() {
+  const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
+  if (!fs.existsSync(settingsPath)) {
+    console.log(ANSI.yellow('No ~/.claude/settings.json found'));
+    return;
+  }
+  let settings = {};
+  try {
+    settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+  } catch {
+    console.log(ANSI.red('Cannot parse ~/.claude/settings.json'));
+    return;
+  }
+
+  const events = ['SessionStart', 'PostToolUse', 'Stop', 'Notification'];
+  console.log(ANSI.bold('\nFleet Hooks Status:\n'));
+  for (const evt of events) {
+    const hooks = (settings.hooks && settings.hooks[evt]) || [];
+    const fleetHooks = hooks.filter(h => h.command && h.command.includes('claude-code-fleet'));
+    if (fleetHooks.length > 0) {
+      console.log(`  ${ANSI.green('✓')} ${evt}: ${fleetHooks.length} fleet hook(s)`);
+    } else {
+      console.log(`  ${ANSI.red('✗')} ${evt}: not installed`);
+    }
+  }
+  console.log();
+}
+
 function cmdRestart(config, onlyNames) {
   cmdDown();
   cmdUp(config, onlyNames);
@@ -582,54 +624,10 @@ function cmdStatus(config) {
 
 // ─── Master commands ─────────────────────────────────────────────────────
 
-function cmdStart(config, onlyNames) {
-  checkDeps();
-
-  const instances = onlyNames
-    ? filterInstances(config.instances, onlyNames)
-    : config.instances;
-
-  const masterConfig = { ...config, instances };
-  const master = new Master(masterConfig);
-
-  process.on('SIGINT', () => {
-    master.tui.stop();
-    master.socketServer.stop();
-    console.log('\nFleet master stopped.');
-    process.exit(0);
-  });
-
-  process.on('SIGTERM', () => {
-    master.tui.stop();
-    master.socketServer.stop();
-    process.exit(0);
-  });
-
+function cmdStart() {
+  const { Master } = require('./master');
+  const master = new Master();
   master.start();
-}
-
-async function cmdTaskAdd(workerName, task) {
-  const sockPath = path.join(GLOBAL_CONFIG_DIR, 'fleet.sock');
-  if (!fs.existsSync(sockPath)) {
-    console.error(ANSI.red('Master is not running. Start with: fleet start'));
-    process.exit(1);
-  }
-
-  try {
-    const resp = await sendToSocket(sockPath, {
-      event: 'TaskAdd',
-      worker: workerName,
-      task,
-    }, 3000);
-    if (resp.ok) {
-      console.log(ANSI.green(`Task added to ${workerName}: ${task}`));
-    } else {
-      console.error(ANSI.red(`Failed: ${resp.error || 'unknown'}`));
-    }
-  } catch {
-    console.error(ANSI.red('Cannot connect to master. Is fleet start running?'));
-    process.exit(1);
-  }
 }
 
 // ─── CLI ─────────────────────────────────────────────────────────────────────
@@ -659,13 +657,17 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-  console.log(`${ANSI.bold('Claude Code Fleet')} — Manage model profiles and run Claude Code
+  console.log(`${ANSI.bold('Claude Code Fleet')} — Observe multiple Claude Code processes
 
 ${ANSI.bold('Usage:')}
   fleet [command] [options]
 
 ${ANSI.bold('Commands:')}
   run                 Start Claude Code with a model profile
+  start               Start fleet observer (TUI dashboard)
+  hooks install       Install fleet hooks to ~/.claude/settings.json
+  hooks remove        Remove fleet hooks from ~/.claude/settings.json
+  hooks status        Show current hook installation status
   model add           Add a new model profile
   model list          List all model profiles
   model edit          Edit a model profile (interactive)
@@ -676,8 +678,6 @@ ${ANSI.bold('Commands:')}
   ls                  List running instances
   status              Show instance configuration details
   init                Create a fleet.config.json from template
-  start               Start master + all workers (with TUI)
-  task add <w> <t>    Add task to a running worker
 
 ${ANSI.bold('Options:')}
   --config <path>   Use specific config file
@@ -687,15 +687,11 @@ ${ANSI.bold('Options:')}
   -h, --help        Show this help
 
 ${ANSI.bold('Examples:')}
+  fleet start                       # Start observer dashboard
+  fleet run --model opus-prod       # Start Claude Code with a model profile
+  fleet hooks status                # Check hook installation status
   fleet model add                   # Add a model profile interactively
-  fleet model list                  # List all model profiles
-  fleet run                         # Select model and start Claude Code
-  fleet run --model opus-prod       # Start with a specific model profile
-  fleet run --model sonnet --cwd .  # Start with model and working directory
   fleet up                          # Start all instances (background)
-  fleet ls                          # List running instances
-  fleet start                      # Start master with TUI dashboard
-  fleet task add opus-worker "Fix bug in auth"
 `);
 }
 
@@ -744,6 +740,34 @@ function main() {
     return;
   }
 
+  // Observer start (doesn't need fleet config)
+  if (command === 'start') {
+    cmdStart();
+    return;
+  }
+
+  // Hooks management (doesn't need fleet config)
+  if (command === 'hooks') {
+    const hooksCmd = subcommand || 'status';
+    switch (hooksCmd) {
+      case 'install':
+        cmdHooksInstall();
+        break;
+      case 'remove':
+        cmdHooksRemove();
+        break;
+      case 'status':
+        cmdHooksStatus();
+        break;
+      default:
+        console.error(ANSI.red(`Unknown hooks command: ${hooksCmd}`));
+        console.error('Available: install, remove, status');
+        process.exit(1);
+    }
+    return;
+  }
+
+  // Remaining commands need fleet config
   const config = loadConfig(opts.config);
 
   switch (command) {
@@ -763,17 +787,6 @@ function main() {
       break;
     case 'status':
       cmdStatus(config);
-      break;
-    case 'start':
-      cmdStart(config, opts.only);
-      break;
-    case 'task':
-      if (subcommand === 'add' && args[0] && args[1]) {
-        cmdTaskAdd(args[0], args.slice(1).join(' '));
-      } else {
-        console.error(ANSI.red('Usage: fleet task add <worker-name> <task-description>'));
-        process.exit(1);
-      }
       break;
     default:
       console.error(ANSI.red(`Unknown command: ${command}`));
