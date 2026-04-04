@@ -61,7 +61,7 @@ class Master {
     // Stop event → remove worker
     if (payload.event === 'Stop') {
       this.workers.delete(sid);
-      this.tui.scheduleRender();
+      if (this.tui) this.tui.scheduleRender();
       return;
     }
 
@@ -106,7 +106,7 @@ class Master {
       if (worker.logs.length > 200) worker.logs.shift();
     }
 
-    this.tui.scheduleRender();
+    if (this.tui) this.tui.scheduleRender();
   }
 
   cleanupExpired() {
@@ -116,7 +116,7 @@ class Master {
         this.workers.delete(sid);
       }
     }
-    this.tui.scheduleRender();
+    if (this.tui) this.tui.scheduleRender();
   }
 }
 

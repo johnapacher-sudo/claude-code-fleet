@@ -72,6 +72,7 @@ class TUI {
   }
 
   _render() {
+    try {
     const workers = this._getWorkers();
     const termWidth = process.stdout.columns || 80;
     const now = Date.now();
@@ -142,6 +143,10 @@ class TUI {
     output += `${ANSI.dim} [q] Quit  [\u2191\u2193] Scroll${ANSI.reset}`;
 
     process.stdout.write(ANSI.clear + output);
+    } catch (err) {
+      // Prevent render errors from crashing the process
+      process.stderr.write(`[fleet] render error: ${err.message}\n`);
+    }
   }
 
   _fmtElapsed(ms) {
