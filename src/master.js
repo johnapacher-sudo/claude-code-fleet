@@ -79,6 +79,10 @@ class Master {
         status: 'idle',
         turns: [],           // completed turns (max 2)
         currentTurn: null,   // { summary, summaryTime, actions: [] } or null
+        termProgram: null,
+        itermSessionId: null,
+        pid: null,
+        ppid: null,
       });
     }
 
@@ -90,6 +94,18 @@ class Master {
       worker.modelName = payload.model || null;
       if (payload.fleet_model_name) {
         worker.fleetModelName = payload.fleet_model_name;
+      }
+      if (payload.term_program) {
+        worker.termProgram = payload.term_program;
+      }
+      if (payload.iterm_session_id) {
+        worker.itermSessionId = payload.iterm_session_id;
+      }
+      if (payload.pid) {
+        worker.pid = payload.pid;
+      }
+      if (payload.ppid) {
+        worker.ppid = payload.ppid;
       }
     }
 
