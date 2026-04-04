@@ -10,7 +10,7 @@ export function Footer() {
     paddingX: 1,
   },
     h(Text, { color: colors.footer },
-      '[j/k] scroll  [enter] expand  [1-9] filter'
+      '[j/k] scroll  [space] expand  [enter] focus  [1-9] jump'
     ),
     h(Text, { color: colors.footer }, '[q] quit'),
   );
