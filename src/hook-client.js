@@ -27,6 +27,10 @@ async function main() {
   // SessionStart: extract model
   if (input.hook_event_name === 'SessionStart') {
     payload.model = input.model || null;
+    payload.pid = process.pid;
+    payload.ppid = process.ppid;
+    payload.term_program = process.env.TERM_PROGRAM || null;
+    payload.iterm_session_id = process.env.ITERM_SESSION_ID || null;
   }
 
   // PostToolUse: only tool_name and tool_input, skip tool_response
