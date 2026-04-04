@@ -24,25 +24,14 @@ class Master {
   }
 
   start() {
-    // 1. Copy hook-client.js to shared location
     if (!fs.existsSync(HOOKS_DIR)) fs.mkdirSync(HOOKS_DIR, { recursive: true });
     fs.copyFileSync(HOOK_CLIENT_SRC, HOOK_CLIENT_DST);
-
-    // 2. Inject hooks into ~/.claude/settings.json
     ensureHooks();
-
-    // 3. Start socket server
     this.socketServer = new SocketServer(SOCK_PATH, (payload) => this.handleEvent(payload));
     this.socketServer.start();
-
-    // 4. Start cleanup timer (every 5 min, remove workers inactive > 3h)
     this.cleanupTimer = setInterval(() => this.cleanupExpired(), CLEANUP_INTERVAL);
-
-    // 5. Start TUI
     this.tui = new TUI(this);
     this.tui.start();
-
-    // 6. Register exit handlers
     process.on('SIGINT', () => this.stop());
     process.on('SIGTERM', () => this.stop());
   }
@@ -58,9 +47,24 @@ class Master {
     const sid = payload.session_id;
     if (!sid) return;
 
-    // Stop event → remove worker
+    // Stop event → complete current round, keep worker
     if (payload.event === 'Stop') {
-      this.workers.delete(sid);
+      if (this.workers.has(sid)) {
+        const worker = this.workers.get(sid);
+        worker.lastEventAt = Date.now();
+        worker.status = 'idle';
+        worker.lastResponse = (payload.last_assistant_message || '').slice(0, 500);
+
+        // Complete current round
+        const round = {
+          actions: [...worker.currentRound.actions],
+          response: worker.lastResponse,
+          endTime: Date.now(),
+        };
+        worker.rounds.push(round);
+        if (worker.rounds.length > 10) worker.rounds.shift();
+        worker.currentRound = { actions: [] };
+      }
       if (this.tui) this.tui.scheduleRender();
       return;
     }
@@ -76,8 +80,10 @@ class Master {
         fleetModelName: null,
         firstEventAt: Date.now(),
         lastEventAt: Date.now(),
-        lastEvent: '',
-        logs: [],
+        status: 'idle',
+        currentRound: { actions: [] },
+        rounds: [],
+        lastResponse: '',
       });
     }
 
@@ -92,18 +98,22 @@ class Master {
       }
     }
 
-    // PostToolUse → record operation
+    // PostToolUse → add action to current round
     if (payload.event === 'PostToolUse') {
-      worker.lastEvent = summarizeToolUse(payload);
-      worker.logs.push({ summary: worker.lastEvent, time: Date.now() });
-      if (worker.logs.length > 200) worker.logs.shift();
+      worker.status = 'active';
+      const summary = summarizeToolUse(payload);
+      worker.currentRound.actions.push({ summary, time: Date.now() });
+      if (worker.currentRound.actions.length > 30) worker.currentRound.actions.shift();
     }
 
     // Notification → record message
     if (payload.event === 'Notification') {
-      worker.lastEvent = payload.message || 'notification';
-      worker.logs.push({ summary: worker.lastEvent, time: Date.now() });
-      if (worker.logs.length > 200) worker.logs.shift();
+      worker.status = 'active';
+      worker.currentRound.actions.push({
+        summary: payload.message || 'notification',
+        time: Date.now(),
+      });
+      if (worker.currentRound.actions.length > 30) worker.currentRound.actions.shift();
     }
 
     if (this.tui) this.tui.scheduleRender();
@@ -149,19 +159,16 @@ function ensureHooks() {
   for (const eventName of ['SessionStart', 'PostToolUse', 'Stop', 'Notification']) {
     if (!settings.hooks[eventName]) settings.hooks[eventName] = [];
 
-    // Check if fleet hook already exists in any matcher group
     const exists = settings.hooks[eventName].some(
       group => (group.hooks || []).some(h => h.command && h.command.includes('claude-code-fleet'))
     );
     if (!exists) {
-      // Claude Code hooks format: array of { matcher?, hooks: [{ type, command }] }
       settings.hooks[eventName].push({
         hooks: [{ type: 'command', command: hookCmd }]
       });
     }
   }
 
-  // Atomic write: temp file → rename
   const tmpPath = SETTINGS_PATH + '.fleet-tmp';
   fs.writeFileSync(tmpPath, JSON.stringify(settings, null, 2) + '\n');
   fs.renameSync(tmpPath, SETTINGS_PATH);
@@ -179,11 +186,9 @@ function removeHooks() {
 
   for (const eventName of Object.keys(settings.hooks)) {
     settings.hooks[eventName] = settings.hooks[eventName].filter(group => {
-      // Remove new-format entries: { hooks: [{ command: "...claude-code-fleet..." }] }
       if ((group.hooks || []).some(h => h.command && h.command.includes('claude-code-fleet'))) {
         return false;
       }
-      // Remove old-format entries: { command: "...claude-code-fleet..." }
       if (group.command && group.command.includes('claude-code-fleet')) {
         return false;
       }

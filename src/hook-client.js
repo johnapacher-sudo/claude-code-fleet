@@ -41,6 +41,11 @@ async function main() {
     payload.notification_type = input.notification_type;
   }
 
+  // Stop: capture AI's final response text
+  if (input.hook_event_name === 'Stop') {
+    payload.last_assistant_message = (input.last_assistant_message || '').slice(0, 500);
+  }
+
   // fleet run environment variable
   if (process.env.FLEET_MODEL_NAME) {
     payload.fleet_model_name = process.env.FLEET_MODEL_NAME;

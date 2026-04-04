@@ -87,46 +87,84 @@ class TUI {
     output += `${ANSI.bgBlack}${ANSI.white}${ANSI.bold}${headerText}${ANSI.reset}${' '.repeat(padLen)}${ANSI.bgBlack}${ANSI.white}${headerRight}${ANSI.reset}\n`;
 
     // Separator
-    output += `${ANSI.dim}${'─'.repeat(termWidth)}${ANSI.reset}\n`;
+    output += `${ANSI.dim}${'\u2500'.repeat(termWidth)}${ANSI.reset}\n\n`;
 
     // Worker cards
-    output += '\n';
     for (let i = 0; i < workers.length; i++) {
       const w = workers[i];
-      const icon = `${ANSI.green}\u25CF${ANSI.reset}`;
+      const isActive = w.status === 'active';
+      const statusIcon = isActive ? `${ANSI.green}\u25CF${ANSI.reset}` : `${ANSI.dim}\u25CB${ANSI.reset}`;
+      const statusText = isActive ? `${ANSI.green}active${ANSI.reset}` : `${ANSI.dim}idle${ANSI.reset}`;
       const elapsed = this._fmtElapsed(now - w.firstEventAt);
 
-      // Line 1: icon + displayName + sessionShort + model info + elapsed
+      // Line 1: icon + name + sessionShort + model + status + elapsed
       let modelInfo = '';
       if (w.fleetModelName && w.modelName) {
         modelInfo = ` \u00B7 ${ANSI.cyan}${w.fleetModelName}${ANSI.reset} (${w.modelName})`;
       } else if (w.modelName) {
         modelInfo = ` \u00B7 ${ANSI.cyan}${w.modelName}${ANSI.reset}`;
       }
-      const line1 = ` ${icon} ${ANSI.bold}${w.displayName}${ANSI.reset} ${ANSI.dim}${w.sessionIdShort}${ANSI.reset}${modelInfo}  ${ANSI.dim}[${elapsed}]${ANSI.reset}`;
+      const line1 = ` ${statusIcon} ${ANSI.bold}${w.displayName}${ANSI.reset} ${ANSI.dim}${w.sessionIdShort}${ANSI.reset}${modelInfo}  [${statusText} ${elapsed}]`;
       output += line1.slice(0, termWidth) + '\n';
 
-      // Line 2: cwd (shortened with ~)
+      // Line 2: cwd
       const homeDir = os.homedir();
       const shortCwd = w.cwd.startsWith(homeDir) ? w.cwd.replace(homeDir, '~') : w.cwd;
       output += `   ${ANSI.dim}${shortCwd}${ANSI.reset}\n`;
 
-      // Lines 3+: recent 3 logs with relative time
-      const recentLogs = w.logs.slice(-3);
-      for (let j = 0; j < recentLogs.length; j++) {
-        const log = recentLogs[j];
-        const ago = this._fmtAgo(now - log.time);
-        const prefix = j === recentLogs.length - 1 ? '\u2514' : '\u251C';
-        const logText = `   ${prefix} ${log.summary}`;
-        const rightText = `${ANSI.dim}${ago}${ANSI.reset}`;
-        const availWidth = termWidth - logText.length - ago.length - 1;
-        if (availWidth > 0) {
-          output += `${logText}${' '.repeat(availWidth)}${rightText}\n`;
-        } else {
-          output += `${logText.slice(0, termWidth)}\n`;
+      // Current round (ongoing)
+      const currentActions = w.currentRound.actions;
+      if (currentActions.length > 0) {
+        output += `   ${ANSI.dim}\u2500\u2500 Round ${w.rounds.length + 1} (current) \u2500\u2500${ANSI.reset}\n`;
+        const showActions = currentActions.slice(-3);
+        for (let j = 0; j < showActions.length; j++) {
+          const a = showActions[j];
+          const ago = this._fmtAgo(now - a.time);
+          const prefix = j === showActions.length - 1 ? '\u2514' : '\u251C';
+          const left = `   ${prefix} ${a.summary}`;
+          const right = `${ANSI.dim}${ago}${ANSI.reset}`;
+          const avail = termWidth - left.length - ago.length - 1;
+          if (avail > 0) {
+            output += `${left}${' '.repeat(avail)}${right}\n`;
+          } else {
+            output += `${left.slice(0, termWidth)}\n`;
+          }
         }
       }
-      if (recentLogs.length === 0) {
+
+      // Last AI response
+      if (w.lastResponse) {
+        const respLines = w.lastResponse.split('\n').filter(l => l.trim());
+        const preview = respLines.slice(0, 2).join(' | ').slice(0, termWidth - 15);
+        output += `   ${ANSI.dim}\u2514 ${ANSI.reset}${preview}\n`;
+      }
+
+      // Previous completed round
+      if (w.rounds.length > 0) {
+        const prevRound = w.rounds[w.rounds.length - 1];
+        output += `   ${ANSI.dim}\u2500\u2500 Round ${w.rounds.length} \u2500\u2500${ANSI.reset}\n`;
+        const prevActions = prevRound.actions.slice(-3);
+        for (let j = 0; j < prevActions.length; j++) {
+          const a = prevActions[j];
+          const ago = this._fmtAgo(now - a.time);
+          const prefix = j === prevActions.length - 1 ? '\u2514' : '\u251C';
+          const left = `   ${prefix} ${a.summary}`;
+          const right = `${ANSI.dim}${ago}${ANSI.reset}`;
+          const avail = termWidth - left.length - ago.length - 1;
+          if (avail > 0) {
+            output += `${left}${' '.repeat(avail)}${right}\n`;
+          } else {
+            output += `${left.slice(0, termWidth)}\n`;
+          }
+        }
+        if (prevRound.response) {
+          const respPreview = prevRound.response.split('\n').filter(l => l.trim()).slice(0, 1).join('').slice(0, termWidth - 15);
+          output += `   ${ANSI.dim}\u2514 ${respPreview}${ANSI.reset}\n`;
+        }
+      }
+
+      // No activity yet
+      if (currentActions.length === 0 && w.rounds.length === 0) {
         output += `   ${ANSI.dim}\u2514 waiting for events...${ANSI.reset}\n`;
       }
 
@@ -139,12 +177,11 @@ class TUI {
     }
 
     // Footer
-    output += `${ANSI.dim}${'─'.repeat(termWidth)}${ANSI.reset}\n`;
+    output += `${ANSI.dim}${'\u2500'.repeat(termWidth)}${ANSI.reset}\n`;
     output += `${ANSI.dim} [q] Quit  [\u2191\u2193] Scroll${ANSI.reset}`;
 
     process.stdout.write(ANSI.clear + output);
     } catch (err) {
-      // Prevent render errors from crashing the process
       process.stderr.write(`[fleet] render error: ${err.message}\n`);
     }
   }
