@@ -23,6 +23,10 @@ const ANSI = {
   cyan: s => `\x1b[36m${s}\x1b[0m`,
 };
 
+function stripAnsi(str) {
+  return str.replace(/\x1b\[[0-9;]*m/g, '');
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function run(cmd, args) {
@@ -187,73 +191,18 @@ function ask(question) {
   });
 }
 
-function selectFromList(items, label) {
-  return new Promise(resolve => {
-    if (items.length === 0) {
-      console.error(ANSI.yellow('No items to select.'));
-      process.exit(1);
-    }
-
-    let selected = 0;
-
-    function render() {
-      // Move cursor up to redraw
-      if (process.stdout.isTTY) {
-        process.stdout.write('\x1b[' + (items.length + 1) + 'A');
-      }
-      process.stdout.write(`\x1b[0J? ${label}:\n`);
-      items.forEach((item, i) => {
-        const marker = i === selected ? '\x1b[36m❯\x1b[0m' : ' ';
-        const line = i === selected ? `\x1b[36m${item.display}\x1b[0m` : item.display;
-        process.stdout.write(`  ${marker} ${line}\n`);
-      });
-    }
-
-    // Initial render
-    process.stdout.write(`\n? ${label}:\n`);
-    items.forEach((item, i) => {
-      const marker = i === 0 ? '\x1b[36m❯\x1b[0m' : ' ';
-      const line = i === 0 ? `\x1b[36m${item.display}\x1b[0m` : item.display;
-      process.stdout.write(`  ${marker} ${line}\n`);
-    });
-
-    const stdin = process.stdin;
-    stdin.setRawMode(true);
-    stdin.resume();
-    stdin.setEncoding('utf-8');
-
-    function cleanup() {
-      stdin.setRawMode(false);
-      stdin.pause();
-      stdin.removeListener('data', onData);
-    }
-
-    function onData(key) {
-      if (key === '\x1b[A' || key === 'k') {
-        // Up
-        selected = (selected - 1 + items.length) % items.length;
-        render();
-      } else if (key === '\x1b[B' || key === 'j') {
-        // Down
-        selected = (selected + 1) % items.length;
-        render();
-      } else if (key === '\r' || key === '\n') {
-        // Enter
-        cleanup();
-        // Clear the list, print final selection
-        process.stdout.write('\x1b[' + (items.length + 1) + 'A');
-        process.stdout.write('\x1b[0J');
-        process.stdout.write(`\x1b[36m❯\x1b[0m ${items[selected].display}\n`);
-        resolve(items[selected].value);
-      } else if (key === '\x03' || key === 'q') {
-        // Ctrl+C or q
-        cleanup();
-        process.stdout.write('\n');
-        process.exit(1);
-      }
-    }
-
-    stdin.on('data', onData);
+async function selectFromList(items, label, dangerMode = false) {
+  const selectorPath = path.join(__dirname, 'components', 'selector.mjs');
+  const { renderSelector } = await import(selectorPath);
+  return renderSelector({
+    title: label,
+    items: items.map(item => ({
+      label: item.label || stripAnsi(item.display),
+      detail: item.detail || '',
+      meta: item.meta || '',
+      value: item.value,
+    })),
+    dangerMode,
   });
 }
 
@@ -314,6 +263,9 @@ async function cmdModelEdit() {
 
   const items = data.models.map(m => ({
     display: `${m.name} (${m.model || 'default'})`,
+    label: m.name,
+    detail: m.model || 'default',
+    meta: `key: ${m.apiKey ? m.apiKey.slice(0, 12) + '...' : 'not set'} \u00B7 endpoint: ${m.apiBaseUrl || 'default'}`,
     value: m.name,
   }));
   const selected = await selectFromList(items, 'Select a model to edit');
@@ -350,9 +302,12 @@ async function cmdModelDelete() {
 
   const items = data.models.map(m => ({
     display: `${m.name} (${m.model || 'default'})`,
+    label: m.name,
+    detail: m.model || 'default',
+    meta: `key: ${m.apiKey ? m.apiKey.slice(0, 12) + '...' : 'not set'} \u00B7 endpoint: ${m.apiBaseUrl || 'default'}`,
     value: m.name,
   }));
-  const selected = await selectFromList(items, 'Select a model to delete');
+  const selected = await selectFromList(items, 'Select a model to delete', true);
 
   const confirm = await ask(`  Delete "${selected}"? (y/N): `);
   if (confirm.toLowerCase() !== 'y') {
@@ -387,7 +342,10 @@ async function cmdRun(modelName, cwd) {
     }
   } else {
     const items = data.models.map(m => ({
-      display: `${m.name} (${ANSI.cyan(m.model || 'default')})`,
+      display: `${m.name} (${m.model || 'default'})`,
+      label: m.name,
+      detail: m.model || 'default',
+      meta: `key: ${m.apiKey ? m.apiKey.slice(0, 12) + '...' : 'not set'} \u00B7 endpoint: ${m.apiBaseUrl || 'default'}`,
       value: m.name,
     }));
     const selected = await selectFromList(items, 'Select a model to run');
