@@ -244,13 +244,22 @@ function cmdModelList() {
     console.log(`Run ${ANSI.bold('fleet model add')} to create one.`);
     return;
   }
-  console.log(ANSI.bold('\nModel Profiles:\n'));
+  console.log(`\n\x1b[38;2;167;139;250m\x1b[1m\u2B22 Model Profiles\x1b[0m`);
+  console.log(`\x1b[38;2;82;82;82m${data.models.length} configured\x1b[0m\n`);
   for (const m of data.models) {
-    console.log(`  ${ANSI.green(m.name)}`);
-    console.log(`    model:    ${ANSI.cyan(m.model || 'default')}`);
-    console.log(`    apiKey:   ${m.apiKey ? m.apiKey.slice(0, 12) + '...' : 'not set'}`);
-    if (m.apiBaseUrl) console.log(`    endpoint: ${m.apiBaseUrl}`);
-    console.log();
+    const purple = '\x1b[38;2;167;139;250m';
+    const dim = '\x1b[38;2;82;82;82m';
+    const white = '\x1b[38;2;224;224;224m';
+    const cyan = '\x1b[38;2;116;199;210m';
+    const gray = '\x1b[38;2;139;148;158m';
+    const reset = '\x1b[0m';
+    const border = `${purple}\u2502${reset}`;
+    console.log(`  ${border} ${white}\x1b[1m${m.name}\x1b[0m${reset}  ${dim}${m.model || 'default'}${reset}`);
+    console.log(`  ${border} ${gray}model:${reset} ${cyan}${m.model || 'default'}${reset}  ${gray}key:${reset} ${dim}${m.apiKey ? m.apiKey.slice(0, 12) + '...' : 'not set'}${reset}`);
+    if (m.apiBaseUrl) {
+      console.log(`  ${border} ${gray}endpoint:${reset} ${dim}${m.apiBaseUrl}${reset}`);
+    }
+    console.log(`  ${purple}\u2502${reset}`);
   }
 }
 
@@ -271,12 +280,28 @@ async function cmdModelEdit() {
   const selected = await selectFromList(items, 'Select a model to edit');
   const entry = data.models.find(m => m.name === selected);
 
-  console.log(`\nEditing ${ANSI.green(selected)}. Press Enter to keep current value.\n`);
+  const purple = '\x1b[38;2;167;139;250m';
+  const dim = '\x1b[38;2;82;82;82m';
+  const white = '\x1b[38;2;224;224;224m';
+  const cyan = '\x1b[38;2;116;199;210m';
+  const gray = '\x1b[38;2;139;148;158m';
+  const reset = '\x1b[0m';
+  const border = `${purple}\u2502${reset}`;
 
-  const newName = await ask(`  Name [${entry.name}]: `);
-  const model = await ask(`  Model ID [${entry.model || ''}]: `);
-  const apiKey = await ask(`  API Key [${entry.apiKey ? entry.apiKey.slice(0, 12) + '...' : ''}]: `);
-  const apiBaseUrl = await ask(`  API Base URL [${entry.apiBaseUrl || ''}]: `);
+  // Show current config card
+  console.log(`\n  ${purple}\x1b[1m\u2B22 Editing ${selected}\x1b[0m${reset}`);
+  console.log(`  ${border} ${gray}Press Enter to keep current value\x1b[0m`);
+  console.log(`  ${border}`);
+  console.log(`  ${border} ${gray}model:${reset}     ${cyan}${entry.model || 'default'}${reset}`);
+  console.log(`  ${border} ${gray}key:${reset}       ${dim}${entry.apiKey ? entry.apiKey.slice(0, 12) + '...' : 'not set'}${reset}`);
+  console.log(`  ${border} ${gray}endpoint:${reset}  ${dim}${entry.apiBaseUrl || 'default'}${reset}`);
+  console.log(`  ${border}`);
+  console.log();
+
+  const newName = await ask(`  ${purple}\u276F${reset} Name [${entry.name}]: `);
+  const model = await ask(`  ${purple}\u276F${reset} Model ID [${entry.model || ''}]: `);
+  const apiKey = await ask(`  ${purple}\u276F${reset} API Key [${entry.apiKey ? entry.apiKey.slice(0, 12) + '...' : ''}]: `);
+  const apiBaseUrl = await ask(`  ${purple}\u276F${reset} API Base URL [${entry.apiBaseUrl || ''}]: `);
 
   if (newName && newName !== entry.name) {
     if (data.models.some(m => m.name === newName)) {
@@ -290,7 +315,7 @@ async function cmdModelEdit() {
   if (apiBaseUrl) entry.apiBaseUrl = apiBaseUrl;
 
   saveModels(data);
-  console.log(ANSI.green(`\n  Model "${selected}" updated.`));
+  console.log(`\n  \x1b[38;2;74;222;128m\u2713\x1b[0m Model ${white}\x1b[1m${selected}\x1b[0m\x1b[0m updated.`);
 }
 
 async function cmdModelDelete() {
@@ -308,16 +333,22 @@ async function cmdModelDelete() {
     value: m.name,
   }));
   const selected = await selectFromList(items, 'Select a model to delete', true);
+  const entry = data.models.find(m => m.name === selected);
 
-  const confirm = await ask(`  Delete "${selected}"? (y/N): `);
-  if (confirm.toLowerCase() !== 'y') {
-    console.log(ANSI.dim('  Cancelled.'));
+  const { renderConfirm } = await import(path.join(__dirname, 'components', 'selector.mjs'));
+  const confirmed = await renderConfirm({
+    title: 'Confirm deletion',
+    itemLabel: selected,
+    itemDetail: entry ? entry.model || '' : '',
+  });
+  if (!confirmed) {
+    console.log('\x1b[38;2;82;82;82m  Cancelled.\x1b[0m');
     return;
   }
 
   data.models = data.models.filter(m => m.name !== selected);
   saveModels(data);
-  console.log(ANSI.green(`  Model "${selected}" deleted.`));
+  console.log(`  \x1b[38;2;74;222;128m\u2713\x1b[0m Model \x1b[38;2;224;224;224m\x1b[1m${selected}\x1b[0m deleted.`);
 }
 
 // ─── Run command ─────────────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 import os from 'os';
 
 export const TERMINAL_NAMES = {
@@ -14,7 +14,11 @@ function runAppleScript(script) {
   execSync('osascript', { input: script, stdio: ['pipe', 'pipe', 'pipe'] });
 }
 
-function focusITerm(itermSessionId, displayName) {
+function escapeAppleScript(str) {
+  return str.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+function focusITerm(itermSessionId) {
   if (itermSessionId) {
     const script = `
 tell application "iTerm"
@@ -22,7 +26,7 @@ tell application "iTerm"
   tell current window
     repeat with t in tabs
       repeat with s in sessions of t
-        if (id of s as text) contains "${itermSessionId.split(':')[0]}" then
+        if (id of s as text) contains "${escapeAppleScript(itermSessionId.split(':')[0])}" then
           select t
           select s
         end if
@@ -43,10 +47,10 @@ end tell`;
 function focusByWindowTitle(processName, displayName) {
   const script = `
 tell application "System Events"
-  tell process "${processName}"
+  tell process "${escapeAppleScript(processName)}"
     set frontmost to true
     repeat with w in windows
-      if name of w contains "${displayName}" then
+      if name of w contains "${escapeAppleScript(displayName)}" then
         perform action "AXRaise" of w
       end if
     end repeat
@@ -56,11 +60,11 @@ end tell`;
 }
 
 function focusVSCode(cwd) {
-  execSync(`open -a "Visual Studio Code" "${cwd}"`, { stdio: 'pipe' });
+  execFileSync('open', ['-a', 'Visual Studio Code', cwd], { stdio: 'pipe' });
 }
 
 function focusCursor(cwd) {
-  execSync(`open -a "Cursor" "${cwd}"`, { stdio: 'pipe' });
+  execFileSync('open', ['-a', 'Cursor', cwd], { stdio: 'pipe' });
 }
 
 export function focusTerminal({ termProgram, itermSessionId, cwd, displayName }) {

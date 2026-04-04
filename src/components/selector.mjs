@@ -113,3 +113,69 @@ export function renderSelector({ title, items, dangerMode = false }) {
     );
   });
 }
+
+function ConfirmDialog({ title, itemLabel, itemDetail, dangerMode, onSelect, onCancel }) {
+  const { exit } = useApp();
+  const [selected, setSelected] = useState(0); // 0 = yes, 1 = no
+  const accent = dangerMode ? ACCENT_DANGER : ACCENT;
+
+  useInput((input, key) => {
+    if (key.leftArrow || input === 'h') setSelected(0);
+    if (key.rightArrow || input === 'l') setSelected(1);
+    if (key.return) {
+      if (selected === 0) onSelect();
+      else onCancel();
+    }
+    if (input === 'q' || (key.ctrl && input === 'c')) {
+      onCancel();
+    }
+  });
+
+  return h(Box, { flexDirection: 'column' },
+    h(Text, { color: accent, bold: true }, `\u2B22 ${title}`),
+    h(Text, { color: COLOR_META }, `${itemLabel} ${itemDetail ? COLOR_DIM + itemDetail : ''}`),
+    h(Box, { marginTop: 1, gap: 2 },
+      h(Box, {},
+        h(Text, {},
+          selected === 0
+            ? h(Text, { color: ACCENT_DANGER, bold: true }, '\u276F Yes, delete')
+            : h(Text, { color: COLOR_IDLE }, '  Yes, delete'),
+        ),
+      ),
+      h(Box, {},
+        h(Text, {},
+          selected === 1
+            ? h(Text, { color: ACCENT, bold: true }, '\u276F Cancel')
+            : h(Text, { color: COLOR_IDLE }, '  Cancel'),
+        ),
+      ),
+    ),
+    h(Text, { color: COLOR_DIM, dimColor: true }, '\u2190\u2192 navigate \u00B7 enter confirm'),
+  );
+}
+
+export function renderConfirm({ title, itemLabel, itemDetail, dangerMode = true }) {
+  return new Promise((resolve) => {
+    let resolved = false;
+    const app = render(
+      h(ConfirmDialog, {
+        title,
+        itemLabel,
+        itemDetail,
+        dangerMode,
+        onSelect: () => {
+          if (resolved) return;
+          resolved = true;
+          app.unmount();
+          resolve(true);
+        },
+        onCancel: () => {
+          if (resolved) return;
+          resolved = true;
+          app.unmount();
+          resolve(false);
+        },
+      })
+    );
+  });
+}
