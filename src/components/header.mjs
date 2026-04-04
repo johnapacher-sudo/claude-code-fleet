@@ -6,7 +6,7 @@ const h = React.createElement;
 
 export function Header({ workers }) {
   const total = workers.length;
-  const running = workers.filter(w => w.status === 'active' || w.status === 'running').length;
+  const running = workers.filter(w => w.computedStatus === 'active').length;
   const idle = total - running;
 
   return h(Box, {

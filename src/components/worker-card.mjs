@@ -125,14 +125,14 @@ function HistoryTurn({ turn, now }) {
   );
 }
 
-export function WorkerCard({ worker, now }) {
+export function WorkerCard({ worker, now, isExpanded = false }) {
   const statusIcon = getStatusIcon(worker.status);
   const elapsed = formatElapsed(now - worker.firstEventAt);
 
-  // The previous turn (for history display)
-  const historyTurn = worker.turns.length > 0
-    ? worker.turns[worker.turns.length - 1]
-    : null;
+  // The previous turn(s) (for history display)
+  const historyTurns = isExpanded
+    ? worker.turns
+    : worker.turns.length > 0 ? [worker.turns[worker.turns.length - 1]] : [];
 
   return h(Box, { flexDirection: 'column', paddingX: 1, paddingBottom: 1 },
     // Header row
@@ -151,7 +151,9 @@ export function WorkerCard({ worker, now }) {
     ),
     // Current turn (expanded)
     h(CurrentTurn, { turn: worker.currentTurn, now }),
-    // History turn (collapsed)
-    h(HistoryTurn, { turn: historyTurn, now }),
+    // History turns (collapsed shows last, expanded shows all)
+    ...historyTurns.map((turn, i) =>
+      h(HistoryTurn, { key: `hist-${i}`, turn, now })
+    ),
   );
 }
