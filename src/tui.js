@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-const readline = require('readline');
+const os = require('os');
 
 const ESC = '\x1b[';
 const ANSI = {
@@ -16,174 +16,150 @@ const ANSI = {
   clear: `${ESC}2J${ESC}H`,
   hideCursor: `${ESC}?25l`,
   showCursor: `${ESC}?25h`,
-  move: (row, col) => `${ESC}${row};${col}H`,
-  clearLine: `${ESC}2K`,
-  clearDown: `${ESC}0J`,
-};
-
-const STATUS_ICONS = {
-  running: `${ANSI.green}●${ANSI.reset}`,
-  idle:    `${ANSI.dim}○${ANSI.reset}`,
-  error:   `${ANSI.red}!${ANSI.reset}`,
-  pending: `${ANSI.dim}·${ANSI.reset}`,
 };
 
 class TUI {
-  constructor(workers, onInput) {
-    this.workers = workers; // Map<string, workerState> — shared reference with master
-    this.onInput = onInput; // (action, payload) => void
-    this.logs = [];
-    this.selectedIdx = 0;
-    this.filterWorker = null;
-    this.inputText = '';
-    this.mode = 'normal'; // 'normal' | 'input'
-    this.maxLogs = 100;
+  constructor(master) {
+    this.master = master;
     this.running = false;
+    this.renderTimer = null;
+    this.selectedIdx = 0;
   }
 
   start() {
     this.running = true;
     process.stdout.write(ANSI.clear + ANSI.hideCursor);
-    readline.emitKeypressEvents(process.stdin);
-    if (process.stdin.isTTY) process.stdin.setRawMode(true);
+    process.stdin.setRawMode(true);
     process.stdin.resume();
     process.stdin.setEncoding('utf-8');
-    process.stdin.on('keypress', (ch, key) => this._onKey(ch, key));
+    process.stdin.on('data', (key) => this._onKey(key));
     this._render();
   }
 
   stop() {
     this.running = false;
     try {
-      if (process.stdin.isTTY) process.stdin.setRawMode(false);
+      process.stdin.setRawMode(false);
       process.stdin.pause();
     } catch { /* already closed */ }
     process.stdout.write(ANSI.showCursor + ANSI.clear);
   }
 
-  addLog(worker, text, type = 'info') {
-    this.logs.push({ worker, text, type, time: Date.now() });
-    if (this.logs.length > this.maxLogs) this.logs.shift();
-    if (this.running) this._render();
-  }
-
-  update() {
-    if (this.running) this._render();
-  }
-
-  _getWorkerNames() {
-    return Object.keys(this.workers);
-  }
-
-  _onKey(ch, key) {
-    if (this.mode === 'input') {
-      if (key && key.name === 'escape') {
-        this.mode = 'normal';
-        this.inputText = '';
-      } else if (key && key.name === 'return') {
-        const workerNames = this._getWorkerNames();
-        const target = workerNames[this.selectedIdx];
-        if (target && this.inputText.trim()) {
-          this.onInput('task', { worker: target, task: this.inputText.trim() });
-        }
-        this.inputText = '';
-        this.mode = 'normal';
-      } else if (key && key.name === 'backspace') {
-        this.inputText = this.inputText.slice(0, -1);
-      } else if (ch && !key.ctrl && !key.meta) {
-        this.inputText += ch;
-      }
+  scheduleRender() {
+    if (!this.running) return;
+    if (this.renderTimer) return;
+    this.renderTimer = setTimeout(() => {
+      this.renderTimer = null;
       this._render();
-      return;
-    }
+    }, 100);
+  }
 
-    const names = this._getWorkerNames();
-    if (key && key.name === 'up') {
+  _getWorkers() {
+    return [...this.master.workers.values()];
+  }
+
+  _onKey(key) {
+    const workers = this._getWorkers();
+    if (key === 'q' || key === '\x03') {
+      this.master.stop();
+    } else if (key === '\x1b[A') {
       this.selectedIdx = Math.max(0, this.selectedIdx - 1);
-    } else if (key && key.name === 'down') {
-      this.selectedIdx = Math.min(names.length - 1, this.selectedIdx + 1);
-    } else if (key && key.name === 'return') {
-      this.mode = 'input';
-      this.inputText = '';
-    } else if (ch === 'a') {
-      this.mode = 'input';
-      this.inputText = '';
-    } else if (ch === 'f') {
-      const target = names[this.selectedIdx];
-      this.filterWorker = this.filterWorker === target ? null : target;
-    } else if (ch === 'q') {
-      this.onInput('quit', {});
+      this._render();
+    } else if (key === '\x1b[B') {
+      this.selectedIdx = Math.min(Math.max(0, workers.length - 1), this.selectedIdx + 1);
+      this._render();
     }
-    this._render();
   }
 
   _render() {
-    const names = this._getWorkerNames();
+    const workers = this._getWorkers();
     const termWidth = process.stdout.columns || 80;
-    const termHeight = process.stdout.rows || 24;
-    const time = new Date().toLocaleTimeString('en-US', { hour12: false });
+    const now = Date.now();
 
     let output = '';
 
-    // Header
-    const title = `${ANSI.bold} Claude Code Fleet ${ANSI.reset}`;
-    const rightPad = Math.max(0, termWidth - 25 - time.length);
-    output += `${ANSI.bgBlack}${ANSI.white}${title}${' '.repeat(rightPad)}${time} ${ANSI.reset}\n`;
+    // Header bar
+    const count = workers.length;
+    const headerText = ' Fleet Master ';
+    const headerRight = ` ${count} worker${count !== 1 ? 's' : ''} `;
+    const padLen = Math.max(0, termWidth - headerText.length - headerRight.length);
+    output += `${ANSI.bgBlack}${ANSI.white}${ANSI.bold}${headerText}${ANSI.reset}${' '.repeat(padLen)}${ANSI.bgBlack}${ANSI.white}${headerRight}${ANSI.reset}\n`;
 
-    // Worker status rows
+    // Separator
+    output += `${ANSI.dim}${'─'.repeat(termWidth)}${ANSI.reset}\n`;
+
+    // Worker cards
     output += '\n';
-    for (let i = 0; i < names.length; i++) {
-      const name = names[i];
-      const w = this.workers[name];
-      const icon = STATUS_ICONS[w.status] || STATUS_ICONS.pending;
-      const statusStr = (w.status || 'pending').toUpperCase().padEnd(8);
-      const progress = `${w.taskIndex || 0}/${w.totalTasks || 0}`;
-      const taskStr = w.currentTask || (w.status === 'idle' ? '(no pending tasks)' : '—');
-      const elapsed = w.startTime ? this._fmtElapsed(Date.now() - w.startTime) : '00:00:00';
-      const selected = i === this.selectedIdx ? `${ANSI.cyan}▸${ANSI.reset}` : ' ';
+    for (let i = 0; i < workers.length; i++) {
+      const w = workers[i];
+      const icon = `${ANSI.green}\u25CF${ANSI.reset}`;
+      const elapsed = this._fmtElapsed(now - w.firstEventAt);
 
-      const line = ` ${selected} ${icon} ${ANSI.bold}${name.padEnd(16)}${ANSI.reset} ${statusStr} ${progress.padEnd(5)} ${ANSI.dim}${taskStr.slice(0, 40).padEnd(42)}${ANSI.reset} ${elapsed}`;
-      output += line.slice(0, termWidth) + '\n';
-    }
-    output += '\n';
+      // Line 1: icon + displayName + sessionShort + model info + elapsed
+      let modelInfo = '';
+      if (w.fleetModelName && w.modelName) {
+        modelInfo = ` \u00B7 ${ANSI.cyan}${w.fleetModelName}${ANSI.reset} (${w.modelName})`;
+      } else if (w.modelName) {
+        modelInfo = ` \u00B7 ${ANSI.cyan}${w.modelName}${ANSI.reset}`;
+      }
+      const line1 = ` ${icon} ${ANSI.bold}${w.displayName}${ANSI.reset} ${ANSI.dim}${w.sessionIdShort}${ANSI.reset}${modelInfo}  ${ANSI.dim}[${elapsed}]${ANSI.reset}`;
+      output += line1.slice(0, termWidth) + '\n';
 
-    // Log panel
-    const logHeight = Math.max(3, termHeight - names.length - 10);
-    output += `${ANSI.dim}├─ Worker Logs ${'─'.repeat(Math.max(0, termWidth - 16))}${ANSI.reset}\n`;
+      // Line 2: cwd (shortened with ~)
+      const homeDir = os.homedir();
+      const shortCwd = w.cwd.startsWith(homeDir) ? w.cwd.replace(homeDir, '~') : w.cwd;
+      output += `   ${ANSI.dim}${shortCwd}${ANSI.reset}\n`;
 
-    const filteredLogs = this.filterWorker
-      ? this.logs.filter(l => l.worker === this.filterWorker)
-      : this.logs;
-    const visibleLogs = filteredLogs.slice(-logHeight);
-    for (const log of visibleLogs) {
-      const colorMap = { info: ANSI.dim, warn: ANSI.yellow, error: ANSI.red, success: ANSI.green };
-      const color = colorMap[log.type] || ANSI.dim;
-      const prefix = `[${log.worker}]`;
-      const line = ` ${color}${prefix} ${log.text.slice(0, termWidth - prefix.length - 3)}${ANSI.reset}`;
-      output += line.slice(0, termWidth) + '\n';
-    }
-    for (let i = visibleLogs.length; i < logHeight; i++) {
+      // Lines 3+: recent 3 logs with relative time
+      const recentLogs = w.logs.slice(-3);
+      for (let j = 0; j < recentLogs.length; j++) {
+        const log = recentLogs[j];
+        const ago = this._fmtAgo(now - log.time);
+        const prefix = j === recentLogs.length - 1 ? '\u2514' : '\u251C';
+        const logText = `   ${prefix} ${log.summary}`;
+        const rightText = `${ANSI.dim}${ago}${ANSI.reset}`;
+        const availWidth = termWidth - logText.length - ago.length - 1;
+        if (availWidth > 0) {
+          output += `${logText}${' '.repeat(availWidth)}${rightText}\n`;
+        } else {
+          output += `${logText.slice(0, termWidth)}\n`;
+        }
+      }
+      if (recentLogs.length === 0) {
+        output += `   ${ANSI.dim}\u2514 waiting for events...${ANSI.reset}\n`;
+      }
+
       output += '\n';
     }
 
-    // Input area
-    output += `${ANSI.dim}├─ Input ${'─'.repeat(Math.max(0, termWidth - 10))}${ANSI.reset}\n`;
-    if (this.mode === 'input') {
-      const target = names[this.selectedIdx] || '?';
-      output += ` ${ANSI.cyan}→ [${target}]${ANSI.reset} ${this.inputText}${ANSI.dim}_${ANSI.reset}\n`;
-    } else {
-      output += ` > ${ANSI.dim}Enter: send task | a: add task | f: filter | q: quit${ANSI.reset}\n`;
+    // Empty state
+    if (workers.length === 0) {
+      output += `  ${ANSI.dim}No active workers. Start claude processes to see them here.${ANSI.reset}\n\n`;
     }
+
+    // Footer
+    output += `${ANSI.dim}${'─'.repeat(termWidth)}${ANSI.reset}\n`;
+    output += `${ANSI.dim} [q] Quit  [\u2191\u2193] Scroll${ANSI.reset}`;
 
     process.stdout.write(ANSI.clear + output);
   }
 
   _fmtElapsed(ms) {
     const s = Math.floor(ms / 1000);
-    const h = String(Math.floor(s / 3600)).padStart(2, '0');
-    const m = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
-    const sec = String(s % 60).padStart(2, '0');
-    return `${h}:${m}:${sec}`;
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    if (m < 60) return `${m}m`;
+    const h = Math.floor(m / 60);
+    return `${h}h${m % 60}m`;
+  }
+
+  _fmtAgo(ms) {
+    const s = Math.floor(ms / 1000);
+    if (s < 60) return `${s}s ago`;
+    const m = Math.floor(s / 60);
+    if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    return `${h}h ago`;
   }
 }
 
