@@ -4,7 +4,7 @@ import { Header } from './header.mjs';
 import { WorkerCard } from './worker-card.mjs';
 import { Footer } from './footer.mjs';
 import { colors } from './colors.mjs';
-import { focusTerminal, TERMINAL_NAMES } from './terminal-focus.mjs';
+import { focusTerminal } from './terminal-focus.mjs';
 
 const h = React.createElement;
 
