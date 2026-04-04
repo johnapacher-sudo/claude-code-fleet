@@ -209,32 +209,32 @@ async function selectFromList(items, label, dangerMode = false) {
 // ─── Model commands ──────────────────────────────────────────────────────────
 
 async function cmdModelAdd() {
-  console.log(ANSI.bold('\nAdd a new model profile\n'));
-
-  const name = await ask('  Name (e.g. opus-prod): ');
-  if (!name) {
-    console.error(ANSI.red('Name is required.'));
-    process.exit(1);
-  }
+  const selectorPath = path.join(__dirname, 'components', 'selector.mjs');
+  const inputMod = await import(selectorPath);
+  const created = await inputMod.renderInput({
+    title: 'Add a new model profile',
+    fields: [
+      { label: 'Name', value: '', placeholder: 'e.g. opus-prod' },
+      { label: 'Model ID', value: '', placeholder: 'e.g. claude-opus-4-6' },
+      { label: 'API Key', value: '', placeholder: 'sk-ant-...' },
+      { label: 'API Base URL', value: '', placeholder: 'https://api.anthropic.com (leave empty for default)' },
+    ],
+  });
 
   const data = loadModels();
-  if (data.models.some(m => m.name === name)) {
-    console.error(ANSI.red(`Model "${name}" already exists.`));
+  if (data.models.some(m => m.name === created.Name)) {
+    console.error(ANSI.red(`Model "${created.Name}" already exists.`));
     process.exit(1);
   }
 
-  const model = await ask('  Model ID (e.g. claude-opus-4-6): ');
-  const apiKey = await ask('  API Key: ');
-  const apiBaseUrl = await ask('  API Base URL (leave empty for default): ');
-
-  const entry = { name };
-  if (model) entry.model = model;
-  if (apiKey) entry.apiKey = apiKey;
-  if (apiBaseUrl) entry.apiBaseUrl = apiBaseUrl;
-
-  data.models.push(entry);
+  data.models.push({
+    name: created.Name,
+    model: created['Model ID'] || undefined,
+    apiKey: created['API Key'] || undefined,
+    apiBaseUrl: created['API Base URL'] || undefined,
+  });
   saveModels(data);
-  console.log(ANSI.green(`\n  Model "${name}" added.`));
+  console.log(ANSI.green(`\n  Model "${created.Name}" added.`));
 }
 
 function cmdModelList() {
@@ -244,22 +244,12 @@ function cmdModelList() {
     console.log(`Run ${ANSI.bold('fleet model add')} to create one.`);
     return;
   }
-  console.log(`\n\x1b[38;2;167;139;250m\x1b[1m\u2B22 Model Profiles\x1b[0m`);
-  console.log(`\x1b[38;2;82;82;82m${data.models.length} configured\x1b[0m\n`);
+  console.log(`\n\x1b[38;2;167;139;250m\x1b[1m\u2B22 Model Profiles\x1b[0m  \x1b[38;2;82;82;82m${data.models.length} configured\x1b[0m\n`);
   for (const m of data.models) {
-    const purple = '\x1b[38;2;167;139;250m';
-    const dim = '\x1b[38;2;82;82;82m';
-    const white = '\x1b[38;2;224;224;224m';
-    const cyan = '\x1b[38;2;116;199;210m';
-    const gray = '\x1b[38;2;139;148;158m';
-    const reset = '\x1b[0m';
-    const border = `${purple}\u2502${reset}`;
-    console.log(`  ${border} ${white}\x1b[1m${m.name}\x1b[0m${reset}  ${dim}${m.model || 'default'}${reset}`);
-    console.log(`  ${border} ${gray}model:${reset} ${cyan}${m.model || 'default'}${reset}  ${gray}key:${reset} ${dim}${m.apiKey ? m.apiKey.slice(0, 12) + '...' : 'not set'}${reset}`);
-    if (m.apiBaseUrl) {
-      console.log(`  ${border} ${gray}endpoint:${reset} ${dim}${m.apiBaseUrl}${reset}`);
-    }
-    console.log(`  ${purple}\u2502${reset}`);
+    const key = m.apiKey ? m.apiKey.slice(0, 12) + '...' : '\x1b[38;2;248;81;81mnot set\x1b[0m';
+    const endpoint = m.apiBaseUrl || '\x1b[38;2;74;222;128mdefault\x1b[0m';
+    console.log(`  \x1b[38;2;167;139;250m\u2502\x1b[0m \x1b[38;2;224;224;224m\x1b[1m${m.name}\x1b[0m  \x1b[38;2;82;82;82m${m.model || 'default'}\x1b[0m`);
+    console.log(`    \x1b[38;2;139;155;168mkey:\x1b[0m ${key}  \x1b[38;2;139;155;168mendpoint:\x1b[0m ${endpoint}`);
   }
 }
 
@@ -278,44 +268,34 @@ async function cmdModelEdit() {
     value: m.name,
   }));
   const selected = await selectFromList(items, 'Select a model to edit');
+
   const entry = data.models.find(m => m.name === selected);
+  const selectorPath = path.join(__dirname, 'components', 'selector.mjs');
+  const inputMod = await import(selectorPath);
+  const updated = await inputMod.renderInput({
+    title: `Edit "${selected}"`,
+    fields: [
+      { label: 'Name', value: entry.name, placeholder: 'e.g. opus-prod' },
+      { label: 'Model ID', value: entry.model || '', placeholder: 'e.g. claude-opus-4-6' },
+      { label: 'API Key', value: '', placeholder: 'sk-ant-...', hidden: true },
+      { label: 'API Base URL', value: entry.apiBaseUrl || '', placeholder: 'https://api.anthropic.com (leave empty for default)' },
+    ],
+  });
 
-  const purple = '\x1b[38;2;167;139;250m';
-  const dim = '\x1b[38;2;82;82;82m';
-  const white = '\x1b[38;2;224;224;224m';
-  const cyan = '\x1b[38;2;116;199;210m';
-  const gray = '\x1b[38;2;139;148;158m';
-  const reset = '\x1b[0m';
-  const border = `${purple}\u2502${reset}`;
-
-  // Show current config card
-  console.log(`\n  ${purple}\x1b[1m\u2B22 Editing ${selected}\x1b[0m${reset}`);
-  console.log(`  ${border} ${gray}Press Enter to keep current value\x1b[0m`);
-  console.log(`  ${border}`);
-  console.log(`  ${border} ${gray}model:${reset}     ${cyan}${entry.model || 'default'}${reset}`);
-  console.log(`  ${border} ${gray}key:${reset}       ${dim}${entry.apiKey ? entry.apiKey.slice(0, 12) + '...' : 'not set'}${reset}`);
-  console.log(`  ${border} ${gray}endpoint:${reset}  ${dim}${entry.apiBaseUrl || 'default'}${reset}`);
-  console.log(`  ${border}`);
-  console.log();
-
-  const newName = await ask(`  ${purple}\u276F${reset} Name [${entry.name}]: `);
-  const model = await ask(`  ${purple}\u276F${reset} Model ID [${entry.model || ''}]: `);
-  const apiKey = await ask(`  ${purple}\u276F${reset} API Key [${entry.apiKey ? entry.apiKey.slice(0, 12) + '...' : ''}]: `);
-  const apiBaseUrl = await ask(`  ${purple}\u276F${reset} API Base URL [${entry.apiBaseUrl || ''}]: `);
-
-  if (newName && newName !== entry.name) {
-    if (data.models.some(m => m.name === newName)) {
-      console.error(ANSI.red(`Name "${newName}" already exists.`));
+  // Apply changes
+  if (updated['Name'] && updated['Name'] !== entry.name) {
+    if (data.models.some(m => m.name === updated['Name'])) {
+      console.error(ANSI.red(`Name "${updated['Name']}" already exists.`));
       process.exit(1);
     }
-    entry.name = newName;
+    entry.name = updated['Name'];
   }
-  if (model) entry.model = model;
-  if (apiKey) entry.apiKey = apiKey;
-  if (apiBaseUrl) entry.apiBaseUrl = apiBaseUrl;
+  if (updated['Model ID']) entry.model = updated['Model ID'];
+  if (updated['API Key']) entry.apiKey = updated['API Key'];
+  if (updated['API Base URL']) entry.apiBaseUrl = updated['API Base URL'];
 
   saveModels(data);
-  console.log(`\n  \x1b[38;2;74;222;128m\u2713\x1b[0m Model ${white}\x1b[1m${selected}\x1b[0m\x1b[0m updated.`);
+  console.log(ANSI.green(`\n  Model "${selected}" updated.`));
 }
 
 async function cmdModelDelete() {
@@ -333,22 +313,22 @@ async function cmdModelDelete() {
     value: m.name,
   }));
   const selected = await selectFromList(items, 'Select a model to delete', true);
-  const entry = data.models.find(m => m.name === selected);
 
-  const { renderConfirm } = await import(path.join(__dirname, 'components', 'selector.mjs'));
-  const confirmed = await renderConfirm({
-    title: 'Confirm deletion',
-    itemLabel: selected,
-    itemDetail: entry ? entry.model || '' : '',
+  const selectorPath = path.join(__dirname, 'components', 'selector.mjs');
+  const confirmMod = await import(selectorPath);
+  await confirmMod.renderConfirm({
+    title: `Delete "${selected}"?`,
+    items: {
+      label: selected,
+      detail: 'This cannot be undone',
+      value: selected,
+    },
+    dangerMode: true,
   });
-  if (!confirmed) {
-    console.log('\x1b[38;2;82;82;82m  Cancelled.\x1b[0m');
-    return;
-  }
 
   data.models = data.models.filter(m => m.name !== selected);
   saveModels(data);
-  console.log(`  \x1b[38;2;74;222;128m\u2713\x1b[0m Model \x1b[38;2;224;224;224m\x1b[1m${selected}\x1b[0m deleted.`);
+  console.log(ANSI.green(`  Model "${selected}" deleted.`));
 }
 
 // ─── Run command ─────────────────────────────────────────────────────────────
