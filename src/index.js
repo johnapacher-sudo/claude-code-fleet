@@ -575,10 +575,12 @@ function cmdHooksStatus() {
   const events = ['SessionStart', 'PostToolUse', 'Stop', 'Notification'];
   console.log(ANSI.bold('\nFleet Hooks Status:\n'));
   for (const evt of events) {
-    const hooks = (settings.hooks && settings.hooks[evt]) || [];
-    const fleetHooks = hooks.filter(h => h.command && h.command.includes('claude-code-fleet'));
-    if (fleetHooks.length > 0) {
-      console.log(`  ${ANSI.green('✓')} ${evt}: ${fleetHooks.length} fleet hook(s)`);
+    const groups = (settings.hooks && settings.hooks[evt]) || [];
+    const fleetCount = groups.filter(
+      g => (g.hooks || []).some(h => h.command && h.command.includes('claude-code-fleet'))
+    ).length;
+    if (fleetCount > 0) {
+      console.log(`  ${ANSI.green('✓')} ${evt}: ${fleetCount} fleet hook(s)`);
     } else {
       console.log(`  ${ANSI.red('✗')} ${evt}: not installed`);
     }

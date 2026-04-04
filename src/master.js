@@ -148,11 +148,16 @@ function ensureHooks() {
 
   for (const eventName of ['SessionStart', 'PostToolUse', 'Stop', 'Notification']) {
     if (!settings.hooks[eventName]) settings.hooks[eventName] = [];
+
+    // Check if fleet hook already exists in any matcher group
     const exists = settings.hooks[eventName].some(
-      h => h.command && h.command.includes('claude-code-fleet')
+      group => (group.hooks || []).some(h => h.command && h.command.includes('claude-code-fleet'))
     );
     if (!exists) {
-      settings.hooks[eventName].push({ command: hookCmd, async: true });
+      // Claude Code hooks format: array of { matcher?, hooks: [{ type, command }] }
+      settings.hooks[eventName].push({
+        hooks: [{ type: 'command', command: hookCmd }]
+      });
     }
   }
 
@@ -173,9 +178,17 @@ function removeHooks() {
   if (!settings.hooks) return;
 
   for (const eventName of Object.keys(settings.hooks)) {
-    settings.hooks[eventName] = settings.hooks[eventName].filter(
-      h => !h.command || !h.command.includes('claude-code-fleet')
-    );
+    settings.hooks[eventName] = settings.hooks[eventName].filter(group => {
+      // Remove new-format entries: { hooks: [{ command: "...claude-code-fleet..." }] }
+      if ((group.hooks || []).some(h => h.command && h.command.includes('claude-code-fleet'))) {
+        return false;
+      }
+      // Remove old-format entries: { command: "...claude-code-fleet..." }
+      if (group.command && group.command.includes('claude-code-fleet')) {
+        return false;
+      }
+      return true;
+    });
     if (settings.hooks[eventName].length === 0) delete settings.hooks[eventName];
   }
   if (Object.keys(settings.hooks).length === 0) delete settings.hooks;
