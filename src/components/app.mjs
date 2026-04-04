@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Box, Text, useApp, useInput, render } from 'ink';
 import { Header } from './header.mjs';
 import { WorkerCard } from './worker-card.mjs';
 import { Footer } from './footer.mjs';
 import { colors } from './colors.mjs';
+import { focusTerminal, TERMINAL_NAMES } from './terminal-focus.mjs';
 
 const h = React.createElement;
 
@@ -20,6 +21,8 @@ function App({ master }) {
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [sortMode, setSortMode] = useState('time');
   const [expanded, setExpanded] = useState(new Set());
+  const [focusStatus, setFocusStatus] = useState(null);
+  const focusTimerRef = useRef(null);
 
   // Re-render on master data changes
   useEffect(() => {
@@ -70,7 +73,8 @@ function App({ master }) {
     if (key.tab) {
       setSortMode(m => m === 'time' ? 'name' : 'time');
     }
-    if (key.return) {
+    // Space: expand/collapse worker details
+    if (input === ' ') {
       if (workers.length === 0) return;
       const sid = workers[selectedIdx]?.sessionId;
       if (!sid) return;
@@ -80,6 +84,28 @@ function App({ master }) {
         else next.add(sid);
         return next;
       });
+    }
+    // Enter: focus terminal window
+    if (key.return) {
+      if (workers.length === 0) return;
+      const worker = workers[selectedIdx];
+      if (!worker) return;
+
+      if (!worker.termProgram) {
+        setFocusStatus({ ok: false, reason: 'unknown', name: null });
+      } else {
+        const result = focusTerminal({
+          termProgram: worker.termProgram,
+          itermSessionId: worker.itermSessionId,
+          cwd: worker.cwd,
+          displayName: worker.displayName,
+        });
+        setFocusStatus(result);
+      }
+
+      // Auto-clear after 2 seconds
+      if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
+      focusTimerRef.current = setTimeout(() => setFocusStatus(null), 2000);
     }
     // Number keys 1-9 to jump to worker
     const num = parseInt(input, 10);
@@ -113,6 +139,19 @@ function App({ master }) {
             ),
           ),
     ),
+    // Focus status feedback
+    focusStatus
+      ? h(Box, { paddingX: 1 },
+          focusStatus.ok
+            ? h(Text, { color: colors.running },
+                `\u2713 Focused ${focusStatus.name} \u2192 ${workers[selectedIdx]?.displayName || ''}`)
+            : focusStatus.reason === 'unknown'
+              ? h(Text, { color: colors.slow },
+                  '\u26A0 No terminal info for this worker')
+              : h(Text, { color: colors.modelAlias },
+                  '\u2717 Focus failed'),
+        )
+      : null,
     h(Box, { paddingTop: 1 },
       h(Footer),
     ),
