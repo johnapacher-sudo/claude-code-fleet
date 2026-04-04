@@ -13,6 +13,7 @@ Run multiple Claude Code instances with different API keys, models, and endpoint
 - Run multiple Claude Code workers simultaneously (e.g., Opus for architecture, Sonnet for implementation, Haiku for quick tasks)
 - Use different API keys to distribute rate limits
 - Route requests through different endpoints or proxies
+- **Observe all active Claude Code processes** from a single terminal dashboard
 - Manage it all from one terminal with no external dependencies
 
 ## Prerequisites
@@ -36,6 +37,9 @@ fleet model add
 # Run a single instance (interactive picker)
 fleet run
 
+# Start the observer dashboard
+fleet start
+
 # Or initialize fleet config for multi-instance management
 fleet init
 # Edit fleet.config.json with your API keys, then:
@@ -58,6 +62,17 @@ Manage named model profiles and launch single interactive Claude Code sessions.
 - `fleet run` launches a foreground interactive session with `stdio` inherited
 - If no `--model` flag is given, an interactive arrow-key menu appears
 
+### Observer Mode (Dashboard)
+
+Start a real-time terminal dashboard that observes all active Claude Code processes.
+
+- `fleet start` launches the observer TUI
+- Automatically discovers all Claude Code processes via async hooks
+- Shows session ID, model name, working directory, and recent operations per worker
+- Workers appear when they start (SessionStart hook) and disappear when they stop (Stop hook)
+- Inactive workers (3+ hours without events) are automatically cleaned up
+- No config file required — just run `fleet start` and launch Claude Code processes
+
 ### Fleet Mode (Background)
 
 Define multiple instances in a config file and manage them as background processes.
@@ -66,28 +81,20 @@ Define multiple instances in a config file and manage them as background process
 - PIDs are tracked in `~/.config/claude-code-fleet/fleet-state.json`
 - Stale entries (dead PIDs) are cleaned up automatically
 
-### Master Mode (with TUI)
-
-Launch a master daemon that orchestrates workers with a real-time terminal dashboard. Workers execute tasks from a queue autonomously. Progress, tool usage, and errors are reported via Claude Code hooks.
-
-- `fleet start` launches master + all workers with a TUI dashboard
-- Workers run `claude -p` with hook-injected settings for progress reporting
-- Task queue per worker: tasks run sequentially, next starts automatically
-- Dynamic task assignment via TUI input or `fleet task add`
-- `fleet stop` (Ctrl+Q in TUI) detaches; workers continue running
-
 ## Commands
 
 | Command | Aliases | Description |
 |---------|---------|-------------|
+| `fleet start` | — | Start observer dashboard (TUI) |
+| `fleet hooks install` | — | Install fleet hooks to ~/.claude/settings.json |
+| `fleet hooks remove` | — | Remove fleet hooks from ~/.claude/settings.json |
+| `fleet hooks status` | — | Show current hook installation status |
 | `fleet run` | — | Start a single interactive Claude Code session with a model profile |
 | `fleet model add` | — | Interactively add a new model profile |
 | `fleet model list` | `model ls` | List all saved model profiles |
 | `fleet model edit` | — | Interactively edit an existing model profile |
 | `fleet model delete` | `model rm` | Interactively delete a model profile |
-| `fleet up` | `start` | Launch all (or `--only`) instances as background processes |
-| `fleet start` | — | Start master daemon with TUI + all workers |
-| `fleet task add <worker> <task>` | — | Append task to a running worker's queue |
+| `fleet up` | — | Launch all (or `--only`) instances as background processes |
 | `fleet down` | `stop` | Stop all running background instances |
 | `fleet restart` | — | Stop then start all (or `--only`) instances |
 | `fleet ls` | `list` | List currently running background instances with PID and model |
@@ -122,33 +129,8 @@ Launch a master daemon that orchestrates workers with a real-time terminal dashb
 | `cwd` | No | Working directory for the instance (created if missing) |
 | `env` | No | Additional environment variables as key-value pairs |
 | `args` | No | Extra CLI arguments passed to `claude` |
-| `tasks` | No | Array of task strings for the worker's queue (master mode) |
 
-### Task Queue (Master Mode)
-
-In master mode, each worker has an independent task queue. Define initial tasks in config:
-
-```json
-{
-  "name": "opus-worker",
-  "apiKey": "sk-ant-xxx",
-  "model": "claude-opus-4-6",
-  "cwd": "./workspace/opus",
-  "tasks": [
-    "Analyze project architecture",
-    "Refactor src/core.js into modules",
-    "Write unit tests"
-  ]
-}
-```
-
-Workers execute tasks sequentially. When a task completes (Claude Code's `Stop` hook fires), the master automatically dispatches the next queued task via hook response. If no tasks remain, the worker goes idle.
-
-Tasks can be added at runtime via:
-- TUI: select a worker, press Enter, type task description
-- CLI: `fleet task add opus-worker "Fix the auth module"`
-
-### Example (Simple Fleet Mode)
+### Example Config
 
 ```json
 {
@@ -181,6 +163,16 @@ Tasks can be added at runtime via:
 
 ## How It Works
 
+### Observer Mode (`fleet start`)
+
+1. Copies hook-client.js to `~/.config/claude-code-fleet/hooks/`
+2. Injects async hooks into `~/.claude/settings.json` (SessionStart, PostToolUse, Stop, Notification)
+3. Starts Unix socket server at `~/.config/claude-code-fleet/fleet.sock`
+4. When any Claude Code process starts, hooks fire and send events to the socket
+5. Master tracks each session by `session_id`, recording operations and model info
+6. TUI renders real-time status with 100ms debounce
+7. Workers inactive for 3+ hours are automatically removed
+
 ### Fleet Mode (`fleet up`)
 
 1. Reads config file for instance definitions
@@ -190,16 +182,15 @@ Tasks can be added at runtime via:
 5. Tracks PIDs in a state file for lifecycle management
 6. Automatically cleans up stale entries on every operation
 
-### Master Mode (`fleet start`)
+### Hooks
 
-1. Copies hook-client.js to `~/.config/claude-code-fleet/hooks/`
-2. Starts Unix socket server at `~/.config/claude-code-fleet/fleet.sock`
-3. Forks a worker.js process per instance (via IPC)
-4. Worker injects hook settings into its cwd's `.claude/settings.local.json`
-5. Worker spawns `claude -p "<task>"` for each queued task
-6. Claude Code hooks (PostToolUse, Stop, Notification) report progress to master via Unix socket
-7. On Stop hook: master checks task queue — returns next task or lets worker idle
-8. TUI renders real-time status, logs, and accepts task input
+Hooks are installed into `~/.claude/settings.json` and are persistent — they survive master restarts. When the master is not running, hook-client exits silently in < 1ms (Claude Code is unaffected).
+
+```bash
+fleet hooks install   # One-time setup
+fleet hooks status    # Check installation
+fleet hooks remove    # Clean uninstall
+```
 
 ## Interactive UI
 

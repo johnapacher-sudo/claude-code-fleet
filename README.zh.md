@@ -13,6 +13,7 @@
 - 同时运行多个 Claude Code 工作进程（例如：Opus 负责架构设计，Sonnet 负责代码实现，Haiku 处理快速任务）
 - 使用不同的 API Key 分散速率限制
 - 通过不同端点或代理路由请求
+- **从单一终端面板观察所有活跃的 Claude Code 进程**
 - 在一个终端中管理所有实例，无需任何外部依赖
 
 ## 前置要求
@@ -36,6 +37,9 @@ fleet model add
 # 运行单个实例（交互式选择器）
 fleet run
 
+# 启动观察者面板
+fleet start
+
 # 或初始化 Fleet 配置以进行多实例管理
 fleet init
 # 编辑 fleet.config.json，填入你的 API Key，然后：
@@ -58,6 +62,17 @@ fleet down
 - `fleet run` 启动前台交互式会话，继承 `stdio`
 - 如果未指定 `--model` 参数，将显示交互式箭头键选择菜单
 
+### 观察者模式（面板）
+
+启动实时终端面板，观察所有活跃的 Claude Code 进程。
+
+- `fleet start` 启动观察者 TUI
+- 自动发现所有 Claude Code 进程（通过 async hooks）
+- 显示每个进程的会话 ID、模型名称、工作目录和最近操作
+- 进程启动时自动出现，停止时自动消失
+- 3 小时以上无事件的条目自动清理
+- 无需配置文件 — 直接运行 `fleet start` 然后启动 Claude Code 进程即可
+
 ### Fleet 模式（后台）
 
 在配置文件中定义多个实例，并将它们作为后台进程进行管理。
@@ -66,28 +81,20 @@ fleet down
 - PID 记录在 `~/.config/claude-code-fleet/fleet-state.json` 中
 - 失效条目（已死亡的 PID）会自动清理
 
-### Master 模式（带 TUI）
-
-启动 master 守护进程，通过实时终端 TUI 面板编排多个 worker。Worker 自主执行任务队列中的任务，进度、工具使用和错误通过 Claude Code hooks 上报。
-
-- `fleet start` 启动 master + 所有 worker，显示 TUI 面板
-- Worker 通过 hook 注入的配置运行 `claude -p`，自动上报进度
-- 每个 worker 独立的任务队列：任务按顺序执行，前一个完成后自动开始下一个
-- 通过 TUI 输入或 `fleet task add` 动态追加任务
-- `fleet stop`（TUI 中 Ctrl+Q）分离 master，worker 继续运行
-
 ## 命令
 
 | 命令 | 别名 | 说明 |
 |------|------|------|
+| `fleet start` | — | 启动观察者面板（TUI） |
+| `fleet hooks install` | — | 安装 fleet hooks 到 ~/.claude/settings.json |
+| `fleet hooks remove` | — | 从 ~/.claude/settings.json 移除 fleet hooks |
+| `fleet hooks status` | — | 查看 hooks 安装状态 |
 | `fleet run` | — | 使用模型配置启动单个交互式 Claude Code 会话 |
 | `fleet model add` | — | 交互式添加新的模型配置 |
 | `fleet model list` | `model ls` | 列出所有已保存的模型配置 |
 | `fleet model edit` | — | 交互式编辑已有的模型配置 |
 | `fleet model delete` | `model rm` | 交互式删除模型配置 |
-| `fleet up` | `start` | 将所有（或 `--only` 指定的）实例作为后台进程启动 |
-| `fleet start` | — | 启动 master 守护进程 + TUI + 所有 worker |
-| `fleet task add <worker> <task>` | — | 向运行中的 worker 追加任务 |
+| `fleet up` | — | 将所有（或 `--only` 指定的）实例作为后台进程启动 |
 | `fleet down` | `stop` | 停止所有运行中的后台实例 |
 | `fleet restart` | — | 停止然后重新启动所有（或 `--only` 指定的）实例 |
 | `fleet ls` | `list` | 列出当前运行中的后台实例（含 PID 和模型信息） |
@@ -122,33 +129,8 @@ fleet down
 | `cwd` | 否 | 实例的工作目录（不存在时自动创建） |
 | `env` | 否 | 额外的环境变量，以键值对形式 |
 | `args` | 否 | 传递给 `claude` 的额外 CLI 参数 |
-| `tasks` | 否 | Worker 的初始任务队列（master 模式下使用） |
 
-### 任务队列（Master 模式）
-
-在 master 模式下，每个 worker 拥有独立的任务队列。可在配置中定义初始任务：
-
-```json
-{
-  "name": "opus-worker",
-  "apiKey": "sk-ant-xxx",
-  "model": "claude-opus-4-6",
-  "cwd": "./workspace/opus",
-  "tasks": [
-    "分析项目架构，输出设计文档",
-    "重构 src/core.js 为模块化结构",
-    "编写核心模块的单元测试"
-  ]
-}
-```
-
-Worker 按顺序执行任务。当一个任务完成时（Claude Code 的 `Stop` hook 触发），master 自动下发队列中的下一个任务。如果队列为空，worker 进入空闲状态。
-
-运行时可通过以下方式动态追加任务：
-- TUI：选中 worker，按 Enter，输入任务描述
-- CLI：`fleet task add opus-worker "修复认证模块"`
-
-### 示例
+### 示例配置
 
 ```json
 {
@@ -181,12 +163,34 @@ Worker 按顺序执行任务。当一个任务完成时（Claude Code 的 `Stop`
 
 ## 工作原理
 
+### 观察者模式（`fleet start`）
+
+1. 复制 hook-client.js 到 `~/.config/claude-code-fleet/hooks/`
+2. 注入 async hooks 到 `~/.claude/settings.json`（SessionStart、PostToolUse、Stop、Notification）
+3. 启动 Unix socket 服务，监听 `~/.config/claude-code-fleet/fleet.sock`
+4. 当任何 Claude Code 进程启动时，hooks 触发并将事件发送到 socket
+5. Master 通过 `session_id` 跟踪每个会话，记录操作和模型信息
+6. TUI 以 100ms 防抖渲染实时状态
+7. 超过 3 小时无事件的条目自动移除
+
+### Fleet 模式（`fleet up`）
+
 1. 读取配置文件获取实例定义
 2. 验证配置（必填字段、名称唯一性）
 3. 检查 `claude` CLI 是否可用
 4. 将每个实例作为独立后台进程启动，应用配置的模型和环境变量
 5. 在状态文件中跟踪 PID 以进行生命周期管理
 6. 每次操作时自动清理失效条目
+
+### Hooks
+
+Hooks 安装在 `~/.claude/settings.json` 中，是持久的 — 不受 master 重启影响。当 master 未运行时，hook-client 在 < 1ms 内静默退出（不影响 Claude Code）。
+
+```bash
+fleet hooks install   # 一次性安装
+fleet hooks status    # 检查安装状态
+fleet hooks remove    # 完整卸载
+```
 
 ## 交互式界面
 
