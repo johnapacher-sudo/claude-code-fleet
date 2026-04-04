@@ -1,48 +1,35 @@
-#!/usr/bin/env node
-
-const os = require('os');
-
-const ESC = '\x1b[';
-const ANSI = {
-  reset: `${ESC}0m`,
-  bold: `${ESC}1m`,
-  dim: `${ESC}2m`,
-  red: `${ESC}31m`,
-  green: `${ESC}32m`,
-  yellow: `${ESC}33m`,
-  cyan: `${ESC}36m`,
-  white: `${ESC}37m`,
-  bgBlack: `${ESC}40m`,
-  clear: `${ESC}2J${ESC}H`,
-  hideCursor: `${ESC}?25l`,
-  showCursor: `${ESC}?25h`,
-};
+// src/tui.js
+const path = require('path');
 
 class TUI {
   constructor(master) {
     this.master = master;
     this.running = false;
     this.renderTimer = null;
-    this.selectedIdx = 0;
+    this.inkApp = null;
   }
 
-  start() {
+  async start() {
     this.running = true;
-    process.stdout.write(ANSI.clear + ANSI.hideCursor);
-    process.stdin.setRawMode(true);
-    process.stdin.resume();
-    process.stdin.setEncoding('utf-8');
-    process.stdin.on('data', (key) => this._onKey(key));
-    this._render();
+    try {
+      const { createApp } = await import(path.join(__dirname, 'components', 'app.mjs'));
+      this.inkApp = createApp(this.master);
+    } catch (err) {
+      process.stderr.write(`[fleet] TUI init error: ${err.message}\n`);
+      process.stderr.write(`[fleet] Falling back to quiet mode.\n`);
+    }
   }
 
   stop() {
     this.running = false;
-    try {
-      process.stdin.setRawMode(false);
-      process.stdin.pause();
-    } catch { /* already closed */ }
-    process.stdout.write(ANSI.showCursor + ANSI.clear);
+    if (this.renderTimer) {
+      clearTimeout(this.renderTimer);
+      this.renderTimer = null;
+    }
+    if (this.inkApp) {
+      try { this.inkApp.unmount(); } catch { /* already unmounted */ }
+      this.inkApp = null;
+    }
   }
 
   scheduleRender() {
@@ -50,158 +37,11 @@ class TUI {
     if (this.renderTimer) return;
     this.renderTimer = setTimeout(() => {
       this.renderTimer = null;
-      this._render();
+      // Trigger Ink rerender via callback set in app.mjs
+      if (this.master._renderCallback) {
+        this.master._renderCallback();
+      }
     }, 100);
-  }
-
-  _getWorkers() {
-    return [...this.master.workers.values()];
-  }
-
-  _onKey(key) {
-    const workers = this._getWorkers();
-    if (key === 'q' || key === '\x03') {
-      this.master.stop();
-    } else if (key === '\x1b[A') {
-      this.selectedIdx = Math.max(0, this.selectedIdx - 1);
-      this._render();
-    } else if (key === '\x1b[B') {
-      this.selectedIdx = Math.min(Math.max(0, workers.length - 1), this.selectedIdx + 1);
-      this._render();
-    }
-  }
-
-  _render() {
-    try {
-    const workers = this._getWorkers();
-    const termWidth = process.stdout.columns || 80;
-    const now = Date.now();
-
-    let output = '';
-
-    // Header bar
-    const count = workers.length;
-    const headerText = ' Fleet Master ';
-    const headerRight = ` ${count} worker${count !== 1 ? 's' : ''} `;
-    const padLen = Math.max(0, termWidth - headerText.length - headerRight.length);
-    output += `${ANSI.bgBlack}${ANSI.white}${ANSI.bold}${headerText}${ANSI.reset}${' '.repeat(padLen)}${ANSI.bgBlack}${ANSI.white}${headerRight}${ANSI.reset}\n`;
-
-    // Separator
-    output += `${ANSI.dim}${'\u2500'.repeat(termWidth)}${ANSI.reset}\n\n`;
-
-    // Worker cards
-    for (let i = 0; i < workers.length; i++) {
-      const w = workers[i];
-      const isActive = w.status === 'active';
-      const statusIcon = isActive ? `${ANSI.green}\u25CF${ANSI.reset}` : `${ANSI.dim}\u25CB${ANSI.reset}`;
-      const statusText = isActive ? `${ANSI.green}active${ANSI.reset}` : `${ANSI.dim}idle${ANSI.reset}`;
-      const elapsed = this._fmtElapsed(now - w.firstEventAt);
-
-      // Line 1: icon + name + sessionShort + model + status + elapsed
-      let modelInfo = '';
-      if (w.fleetModelName && w.modelName) {
-        modelInfo = ` \u00B7 ${ANSI.cyan}${w.fleetModelName}${ANSI.reset} (${w.modelName})`;
-      } else if (w.modelName) {
-        modelInfo = ` \u00B7 ${ANSI.cyan}${w.modelName}${ANSI.reset}`;
-      }
-      const line1 = ` ${statusIcon} ${ANSI.bold}${w.displayName}${ANSI.reset} ${ANSI.dim}${w.sessionIdShort}${ANSI.reset}${modelInfo}  [${statusText} ${elapsed}]`;
-      output += line1.slice(0, termWidth) + '\n';
-
-      // Line 2: cwd
-      const homeDir = os.homedir();
-      const shortCwd = w.cwd.startsWith(homeDir) ? w.cwd.replace(homeDir, '~') : w.cwd;
-      output += `   ${ANSI.dim}${shortCwd}${ANSI.reset}\n`;
-
-      // Current round (ongoing)
-      const currentActions = w.currentRound.actions;
-      if (currentActions.length > 0) {
-        output += `   ${ANSI.dim}\u2500\u2500 Round ${w.rounds.length + 1} (current) \u2500\u2500${ANSI.reset}\n`;
-        const showActions = currentActions.slice(-3);
-        for (let j = 0; j < showActions.length; j++) {
-          const a = showActions[j];
-          const ago = this._fmtAgo(now - a.time);
-          const prefix = j === showActions.length - 1 ? '\u2514' : '\u251C';
-          const left = `   ${prefix} ${a.summary}`;
-          const right = `${ANSI.dim}${ago}${ANSI.reset}`;
-          const avail = termWidth - left.length - ago.length - 1;
-          if (avail > 0) {
-            output += `${left}${' '.repeat(avail)}${right}\n`;
-          } else {
-            output += `${left.slice(0, termWidth)}\n`;
-          }
-        }
-      }
-
-      // Last AI response
-      if (w.lastResponse) {
-        const respLines = w.lastResponse.split('\n').filter(l => l.trim());
-        const preview = respLines.slice(0, 2).join(' | ').slice(0, termWidth - 15);
-        output += `   ${ANSI.dim}\u2514 ${ANSI.reset}${preview}\n`;
-      }
-
-      // Previous completed round
-      if (w.rounds.length > 0) {
-        const prevRound = w.rounds[w.rounds.length - 1];
-        output += `   ${ANSI.dim}\u2500\u2500 Round ${w.rounds.length} \u2500\u2500${ANSI.reset}\n`;
-        const prevActions = prevRound.actions.slice(-3);
-        for (let j = 0; j < prevActions.length; j++) {
-          const a = prevActions[j];
-          const ago = this._fmtAgo(now - a.time);
-          const prefix = j === prevActions.length - 1 ? '\u2514' : '\u251C';
-          const left = `   ${prefix} ${a.summary}`;
-          const right = `${ANSI.dim}${ago}${ANSI.reset}`;
-          const avail = termWidth - left.length - ago.length - 1;
-          if (avail > 0) {
-            output += `${left}${' '.repeat(avail)}${right}\n`;
-          } else {
-            output += `${left.slice(0, termWidth)}\n`;
-          }
-        }
-        if (prevRound.response) {
-          const respPreview = prevRound.response.split('\n').filter(l => l.trim()).slice(0, 1).join('').slice(0, termWidth - 15);
-          output += `   ${ANSI.dim}\u2514 ${respPreview}${ANSI.reset}\n`;
-        }
-      }
-
-      // No activity yet
-      if (currentActions.length === 0 && w.rounds.length === 0) {
-        output += `   ${ANSI.dim}\u2514 waiting for events...${ANSI.reset}\n`;
-      }
-
-      output += '\n';
-    }
-
-    // Empty state
-    if (workers.length === 0) {
-      output += `  ${ANSI.dim}No active workers. Start claude processes to see them here.${ANSI.reset}\n\n`;
-    }
-
-    // Footer
-    output += `${ANSI.dim}${'\u2500'.repeat(termWidth)}${ANSI.reset}\n`;
-    output += `${ANSI.dim} [q] Quit  [\u2191\u2193] Scroll${ANSI.reset}`;
-
-    process.stdout.write(ANSI.clear + output);
-    } catch (err) {
-      process.stderr.write(`[fleet] render error: ${err.message}\n`);
-    }
-  }
-
-  _fmtElapsed(ms) {
-    const s = Math.floor(ms / 1000);
-    if (s < 60) return `${s}s`;
-    const m = Math.floor(s / 60);
-    if (m < 60) return `${m}m`;
-    const h = Math.floor(m / 60);
-    return `${h}h${m % 60}m`;
-  }
-
-  _fmtAgo(ms) {
-    const s = Math.floor(ms / 1000);
-    if (s < 60) return `${s}s ago`;
-    const m = Math.floor(s / 60);
-    if (m < 60) return `${m}m ago`;
-    const h = Math.floor(m / 60);
-    return `${h}h ago`;
   }
 }
 
