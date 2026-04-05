@@ -45,6 +45,7 @@ end tell`;
 }
 
 function focusByWindowTitle(processName, displayName) {
+  // Try AXRaise for precise window targeting (requires Accessibility permission)
   const script = `
 tell application "System Events"
   tell process "${escapeAppleScript(processName)}"
@@ -56,7 +57,13 @@ tell application "System Events"
     end repeat
   end tell
 end tell`;
-  runAppleScript(script);
+  try {
+    runAppleScript(script);
+    return;
+  } catch {
+    // AXRaise may fail without Accessibility permission — fallback to simple activate
+  }
+  runAppleScript(`tell application "${escapeAppleScript(processName)}" to activate`);
 }
 
 function focusVSCode(cwd) {
@@ -81,7 +88,7 @@ export function focusTerminal({ termProgram, itermSessionId, cwd, displayName })
   try {
     switch (termProgram) {
       case 'iTerm.app':
-        focusITerm(itermSessionId, displayName);
+        focusITerm(itermSessionId);
         break;
       case 'Apple_Terminal':
         focusByWindowTitle('Terminal', displayName);

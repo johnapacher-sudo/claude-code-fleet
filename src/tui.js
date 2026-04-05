@@ -39,7 +39,11 @@ class TUI {
       this.renderTimer = null;
       // Trigger Ink rerender via callback set in app.mjs
       if (this.master._renderCallback) {
-        this.master._renderCallback();
+        try {
+          this.master._renderCallback();
+        } catch (err) {
+          process.stderr.write(`[fleet] render error: ${err.message}\n`);
+        }
       }
     }, 100);
   }
