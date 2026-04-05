@@ -9,6 +9,7 @@ const { TUI } = require('./tui');
 const GLOBAL_CONFIG_DIR = path.join(os.homedir(), '.config', 'claude-code-fleet');
 const SOCK_PATH = path.join(GLOBAL_CONFIG_DIR, 'fleet.sock');
 const HOOKS_DIR = path.join(GLOBAL_CONFIG_DIR, 'hooks');
+const SESSIONS_DIR = path.join(GLOBAL_CONFIG_DIR, 'sessions');
 const HOOK_CLIENT_SRC = path.join(__dirname, 'hook-client.js');
 const HOOK_CLIENT_DST = path.join(HOOKS_DIR, 'hook-client.js');
 const SETTINGS_PATH = path.join(os.homedir(), '.claude', 'settings.json');
@@ -27,6 +28,7 @@ class Master {
     if (!fs.existsSync(HOOKS_DIR)) fs.mkdirSync(HOOKS_DIR, { recursive: true });
     fs.copyFileSync(HOOK_CLIENT_SRC, HOOK_CLIENT_DST);
     ensureHooks();
+    this.loadPersistedSessions();
     this.socketServer = new SocketServer(SOCK_PATH, (payload) => this.handleEvent(payload));
     this.socketServer.start();
     this.cleanupTimer = setInterval(() => this.cleanupExpired(), CLEANUP_INTERVAL);
@@ -47,7 +49,7 @@ class Master {
     const sid = payload.session_id;
     if (!sid) return;
 
-    // Stop event → close current turn, keep worker
+    // Stop event → close current turn, delete session file
     if (payload.event === 'Stop') {
       if (this.workers.has(sid)) {
         const worker = this.workers.get(sid);
@@ -61,6 +63,7 @@ class Master {
           worker.currentTurn = null;
         }
       }
+      this.deleteSessionFile(sid);
       if (this.tui) this.tui.scheduleRender();
       return;
     }
@@ -151,11 +154,65 @@ class Master {
   cleanupExpired() {
     const now = Date.now();
     for (const [sid, w] of this.workers) {
-      if (now - w.lastEventAt > EXPIRE_THRESHOLD) {
+      const expired = now - w.lastEventAt > EXPIRE_THRESHOLD;
+      const dead = w.ppid && !this.isProcessAlive(w.ppid);
+      if (expired || dead) {
         this.workers.delete(sid);
+        this.deleteSessionFile(sid);
       }
     }
     if (this.tui) this.tui.scheduleRender();
+  }
+
+  loadPersistedSessions() {
+    if (!fs.existsSync(SESSIONS_DIR)) return;
+    for (const file of fs.readdirSync(SESSIONS_DIR)) {
+      if (!file.endsWith('.json')) continue;
+      const filePath = path.join(SESSIONS_DIR, file);
+      try {
+        const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+        // Verify the process is still alive
+        if (data.ppid && !this.isProcessAlive(data.ppid)) {
+          fs.unlinkSync(filePath);
+          continue;
+        }
+        const sid = data.sessionId;
+        if (!sid || this.workers.has(sid)) {
+          fs.unlinkSync(filePath);
+          continue;
+        }
+        this.workers.set(sid, {
+          sessionId: sid,
+          sessionIdShort: sid.slice(0, 4),
+          displayName: path.basename(data.cwd || 'unknown'),
+          cwd: data.cwd || '',
+          modelName: data.model || null,
+          fleetModelName: data.fleet_model_name || null,
+          firstEventAt: data.timestamp || Date.now(),
+          lastEventAt: data.timestamp || Date.now(),
+          status: 'idle',
+          turns: [],
+          currentTurn: null,
+          termProgram: data.term_program || null,
+          itermSessionId: data.iterm_session_id || null,
+          pid: data.pid || null,
+          ppid: data.ppid || null,
+        });
+      } catch {
+        // Corrupted file → remove it
+        try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+      }
+    }
+  }
+
+  isProcessAlive(pid) {
+    if (!pid) return false;
+    try { process.kill(pid, 0); return true; } catch { return false; }
+  }
+
+  deleteSessionFile(sid) {
+    const filePath = path.join(SESSIONS_DIR, `${sid}.json`);
+    try { fs.unlinkSync(filePath); } catch { /* ignore */ }
   }
 }
 
