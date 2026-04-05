@@ -5,6 +5,7 @@ import { WorkerCard } from './worker-card.mjs';
 import { Footer } from './footer.mjs';
 import { colors } from './colors.mjs';
 import { focusTerminal } from './terminal-focus.mjs';
+import { execSync } from 'child_process';
 
 const h = React.createElement;
 
@@ -99,6 +100,7 @@ function App({ master }) {
           itermSessionId: worker.itermSessionId,
           cwd: worker.cwd,
           displayName: worker.displayName,
+          ppid: worker.ppid,
         });
         setFocusStatus(result);
       }

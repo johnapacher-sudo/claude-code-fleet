@@ -36,12 +36,44 @@ tell application "iTerm"
 end tell`;
     runAppleScript(script);
   } else {
+    runAppleScript(`tell application "iTerm" to activate`);
+  }
+}
+
+function getTtyForPid(pid) {
+  if (!pid) return null;
+  try {
+    const tty = execFileSync('ps', ['-o', 'tty=', '-p', String(pid)], { encoding: 'utf-8' }).trim();
+    return tty || null;
+  } catch {
+    return null;
+  }
+}
+
+function focusAppleTerminal(ppid) {
+  // Strategy: find the tty device of the Claude Code process via its pid,
+  // then tell Terminal.app to select the tab that owns that tty.
+  const tty = getTtyForPid(ppid);
+  if (tty) {
+    const ttyPath = `/dev/${tty}`;
     const script = `
-tell application "iTerm"
+tell application "Terminal"
   activate
+  repeat with w in windows
+    repeat with t in tabs of w
+      if tty of t is "${escapeAppleScript(ttyPath)}" then
+        set selected of t to true
+        set index of w to 1
+        return
+      end if
+    end repeat
+  end repeat
 end tell`;
     runAppleScript(script);
+    return;
   }
+  // Fallback: just activate Terminal (best effort — won't select specific tab)
+  runAppleScript(`tell application "Terminal" to activate`);
 }
 
 function focusByWindowTitle(processName, displayName) {
@@ -74,7 +106,7 @@ function focusCursor(cwd) {
   execFileSync('open', ['-a', 'Cursor', cwd], { stdio: 'pipe' });
 }
 
-export function focusTerminal({ termProgram, itermSessionId, cwd, displayName }) {
+export function focusTerminal({ termProgram, itermSessionId, cwd, displayName, ppid }) {
   if (os.platform() !== 'darwin') {
     return { ok: false, reason: 'unsupported' };
   }
@@ -91,7 +123,7 @@ export function focusTerminal({ termProgram, itermSessionId, cwd, displayName })
         focusITerm(itermSessionId);
         break;
       case 'Apple_Terminal':
-        focusByWindowTitle('Terminal', displayName);
+        focusAppleTerminal(ppid);
         break;
       case 'vscode':
         focusVSCode(cwd);
