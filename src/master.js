@@ -24,16 +24,18 @@ class Master {
     this.cleanupTimer = null;
   }
 
-  start() {
+  async start() {
     if (!fs.existsSync(HOOKS_DIR)) fs.mkdirSync(HOOKS_DIR, { recursive: true });
     fs.copyFileSync(HOOK_CLIENT_SRC, HOOK_CLIENT_DST);
     ensureHooks();
     this.loadPersistedSessions();
+    // Start TUI first (async Ink init) so _renderCallback is ready before events arrive
+    this.tui = new TUI(this);
+    await this.tui.start();
+    // Now safe to receive events
     this.socketServer = new SocketServer(SOCK_PATH, (payload) => this.handleEvent(payload));
     this.socketServer.start();
     this.cleanupTimer = setInterval(() => this.cleanupExpired(), CLEANUP_INTERVAL);
-    this.tui = new TUI(this);
-    this.tui.start();
     process.on('SIGINT', () => this.stop());
     process.on('SIGTERM', () => this.stop());
   }

@@ -27,6 +27,37 @@ function stripAnsi(str) {
   return str.replace(/\x1b\[[0-9;]*m/g, '');
 }
 
+function truncStr(s, max) {
+  if (!s) return s;
+  return s.length > max ? s.slice(0, max) + '...' : s;
+}
+
+function modelMeta(m) {
+  const key = m.apiKey ? truncStr(m.apiKey, 12) + '...' : 'not set';
+  const endpoint = truncStr(m.apiBaseUrl || 'default', 32);
+  return `key: ${key} \u00B7 endpoint: ${endpoint}`;
+}
+
+function modelWarning(m) {
+  const missing = [];
+  if (!m.name) missing.push('Name');
+  if (!m.apiKey) missing.push('API Key');
+  if (!m.model) missing.push('Model ID');
+  if (missing.length === 0) return undefined;
+  return `incomplete: missing ${missing.join(', ')}`;
+}
+
+function modelItem(m) {
+  return {
+    display: `${m.name || '(unnamed)'} (${m.model || 'default'})`,
+    label: m.name || '(unnamed)',
+    detail: m.model || 'default',
+    meta: modelMeta(m),
+    warning: modelWarning(m),
+    value: m.name,
+  };
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function run(cmd, args) {
@@ -200,6 +231,7 @@ async function selectFromList(items, label, dangerMode = false) {
       label: item.label || stripAnsi(item.display),
       detail: item.detail || '',
       meta: item.meta || '',
+      warning: item.warning || undefined,
       value: item.value,
     })),
     dangerMode,
@@ -211,30 +243,53 @@ async function selectFromList(items, label, dangerMode = false) {
 async function cmdModelAdd() {
   const selectorPath = path.join(__dirname, 'components', 'selector.mjs');
   const inputMod = await import(selectorPath);
-  const created = await inputMod.renderInput({
-    title: 'Add a new model profile',
-    fields: [
-      { label: 'Name', value: '', placeholder: 'e.g. opus-prod' },
-      { label: 'Model ID', value: '', placeholder: 'e.g. claude-opus-4-6' },
-      { label: 'API Key', value: '', placeholder: 'sk-ant-...' },
-      { label: 'API Base URL', value: '', placeholder: 'https://api.anthropic.com (leave empty for default)' },
-    ],
-  });
+  const allRequired = ['Name', 'Model ID', 'API Key', 'API Base URL'];
 
-  const data = loadModels();
-  if (data.models.some(m => m.name === created.Name)) {
-    console.error(ANSI.red(`Model "${created.Name}" already exists.`));
-    process.exit(1);
+  while (true) {
+    const created = await inputMod.renderInput({
+      title: 'Add a new model profile',
+      fields: [
+        { label: 'Name', value: '', placeholder: 'e.g. opus-prod' },
+        { label: 'Model ID', value: '', placeholder: 'e.g. claude-opus-4-6' },
+        { label: 'API Key', value: '', placeholder: 'sk-ant-...' },
+        { label: 'API Base URL', value: '', placeholder: 'https://api.anthropic.com' },
+      ],
+      requiredFields: allRequired,
+    });
+
+    if (!created) return; // cancelled
+
+    // Show confirmation
+    const key = truncStr(created['API Key'], 12) + '...';
+    const endpoint = truncStr(created['API Base URL'], 32);
+    const confirmed = await inputMod.renderConfirm({
+      title: `Add model "${created.Name}"?`,
+      items: {
+        label: created.Name,
+        detail: created['Model ID'],
+        meta: `key: ${key} \u00B7 endpoint: ${endpoint}`,
+        value: created.Name,
+      },
+    });
+
+    if (!confirmed) continue; // back to form
+
+    const data = loadModels();
+    if (data.models.some(m => m.name === created.Name)) {
+      console.error(ANSI.red(`Model "${created.Name}" already exists.`));
+      process.exit(1);
+    }
+
+    data.models.push({
+      name: created.Name,
+      model: created['Model ID'] || undefined,
+      apiKey: created['API Key'] || undefined,
+      apiBaseUrl: created['API Base URL'] || undefined,
+    });
+    saveModels(data);
+    console.log(ANSI.green(`\n  Model "${created.Name}" added.`));
+    return;
   }
-
-  data.models.push({
-    name: created.Name,
-    model: created['Model ID'] || undefined,
-    apiKey: created['API Key'] || undefined,
-    apiBaseUrl: created['API Base URL'] || undefined,
-  });
-  saveModels(data);
-  console.log(ANSI.green(`\n  Model "${created.Name}" added.`));
 }
 
 function cmdModelList() {
@@ -254,48 +309,71 @@ function cmdModelList() {
 }
 
 async function cmdModelEdit() {
-  const data = loadModels();
-  if (data.models.length === 0) {
-    console.error(ANSI.yellow('No model profiles to edit.'));
-    return;
-  }
-
-  const items = data.models.map(m => ({
-    display: `${m.name} (${m.model || 'default'})`,
-    label: m.name,
-    detail: m.model || 'default',
-    meta: `key: ${m.apiKey ? m.apiKey.slice(0, 12) + '...' : 'not set'} \u00B7 endpoint: ${m.apiBaseUrl || 'default'}`,
-    value: m.name,
-  }));
-  const selected = await selectFromList(items, 'Select a model to edit');
-
-  const entry = data.models.find(m => m.name === selected);
   const selectorPath = path.join(__dirname, 'components', 'selector.mjs');
   const inputMod = await import(selectorPath);
-  const updated = await inputMod.renderInput({
-    title: `Edit "${selected}"`,
-    fields: [
-      { label: 'Name', value: entry.name, placeholder: 'e.g. opus-prod' },
-      { label: 'Model ID', value: entry.model || '', placeholder: 'e.g. claude-opus-4-6' },
-      { label: 'API Key', value: '', placeholder: 'sk-ant-...', hidden: true },
-      { label: 'API Base URL', value: entry.apiBaseUrl || '', placeholder: 'https://api.anthropic.com (leave empty for default)' },
-    ],
-  });
 
-  // Apply changes
-  if (updated['Name'] && updated['Name'] !== entry.name) {
-    if (data.models.some(m => m.name === updated['Name'])) {
-      console.error(ANSI.red(`Name "${updated['Name']}" already exists.`));
-      process.exit(1);
+  selectLoop: while (true) {
+    const data = loadModels();
+    if (data.models.length === 0) {
+      console.error(ANSI.yellow('No model profiles to edit.'));
+      return;
     }
-    entry.name = updated['Name'];
-  }
-  if (updated['Model ID']) entry.model = updated['Model ID'];
-  if (updated['API Key']) entry.apiKey = updated['API Key'];
-  if (updated['API Base URL']) entry.apiBaseUrl = updated['API Base URL'];
 
-  saveModels(data);
-  console.log(ANSI.green(`\n  Model "${selected}" updated.`));
+    const items = data.models.map(m => modelItem(m));
+    const selected = await selectFromList(items, 'Select a model to edit');
+    if (selected === null) return; // cancelled from selector
+
+    const entry = data.models.find(m => m.name === selected);
+    if (!entry) continue selectLoop; // stale data, re-show selector
+
+    editLoop: while (true) {
+      const updated = await inputMod.renderInput({
+        title: `Edit "${selected || '(unnamed)'}"`,
+        fields: [
+          { label: 'Name', value: entry.name || '', placeholder: 'e.g. opus-prod' },
+          { label: 'Model ID', value: entry.model || '', placeholder: 'e.g. claude-opus-4-6' },
+          { label: 'API Key', value: '', placeholder: entry.apiKey ? `current: ${truncStr(entry.apiKey, 8)}**** (leave empty to keep)` : 'required' },
+          { label: 'API Base URL', value: entry.apiBaseUrl || '', placeholder: 'https://api.anthropic.com (leave empty for default)' },
+        ],
+        requiredFields: entry.apiKey ? ['Name', 'Model ID'] : ['Name', 'Model ID', 'API Key'],
+      });
+
+      if (!updated) continue selectLoop; // Esc from form → back to selector
+
+      // Show confirmation
+      const key = updated['API Key']
+        ? truncStr(updated['API Key'], 12) + '...'
+        : (entry.apiKey ? '(unchanged)' : 'not set');
+      const endpoint = truncStr(updated['API Base URL'] || entry.apiBaseUrl || 'default', 32);
+      const confirmed = await inputMod.renderConfirm({
+        title: `Save changes to "${updated.Name || entry.name || '(unnamed)'}"?`,
+        items: {
+          label: updated.Name || entry.name || '(unnamed)',
+          detail: updated['Model ID'] || entry.model || 'default',
+          meta: `key: ${key} \u00B7 endpoint: ${endpoint}`,
+          value: selected,
+        },
+      });
+
+      if (!confirmed) continue editLoop; // n/Esc from confirm → back to form
+
+      // Apply changes
+      if (updated['Name'] !== undefined && updated['Name'] !== entry.name) {
+        if (updated['Name'] && data.models.some(m => m.name === updated['Name'])) {
+          console.error(ANSI.red(`Name "${updated['Name']}" already exists.`));
+          process.exit(1);
+        }
+        entry.name = updated['Name'];
+      }
+      if (updated['Model ID'] !== undefined) entry.model = updated['Model ID'] || undefined;
+      if (updated['API Key']) entry.apiKey = updated['API Key'];
+      if (updated['API Base URL'] !== undefined) entry.apiBaseUrl = updated['API Base URL'] || undefined;
+
+      saveModels(data);
+      console.log(ANSI.green(`\n  Model "${updated.Name || selected}" updated.`));
+      return;
+    }
+  }
 }
 
 async function cmdModelDelete() {
@@ -305,18 +383,13 @@ async function cmdModelDelete() {
     return;
   }
 
-  const items = data.models.map(m => ({
-    display: `${m.name} (${m.model || 'default'})`,
-    label: m.name,
-    detail: m.model || 'default',
-    meta: `key: ${m.apiKey ? m.apiKey.slice(0, 12) + '...' : 'not set'} \u00B7 endpoint: ${m.apiBaseUrl || 'default'}`,
-    value: m.name,
-  }));
+  const items = data.models.map(m => modelItem(m));
   const selected = await selectFromList(items, 'Select a model to delete', true);
+  if (selected === null) return; // cancelled
 
   const selectorPath = path.join(__dirname, 'components', 'selector.mjs');
   const confirmMod = await import(selectorPath);
-  await confirmMod.renderConfirm({
+  const confirmed = await confirmMod.renderConfirm({
     title: `Delete "${selected}"?`,
     items: {
       label: selected,
@@ -325,6 +398,8 @@ async function cmdModelDelete() {
     },
     dangerMode: true,
   });
+
+  if (!confirmed) return; // cancelled
 
   data.models = data.models.filter(m => m.name !== selected);
   saveModels(data);
@@ -352,14 +427,9 @@ async function cmdRun(modelName, cwd) {
       process.exit(1);
     }
   } else {
-    const items = data.models.map(m => ({
-      display: `${m.name} (${m.model || 'default'})`,
-      label: m.name,
-      detail: m.model || 'default',
-      meta: `key: ${m.apiKey ? m.apiKey.slice(0, 12) + '...' : 'not set'} \u00B7 endpoint: ${m.apiBaseUrl || 'default'}`,
-      value: m.name,
-    }));
+    const items = data.models.map(m => modelItem(m));
     const selected = await selectFromList(items, 'Select a model to run');
+    if (selected === null) return; // cancelled
     entry = data.models.find(m => m.name === selected);
   }
 
@@ -595,10 +665,10 @@ function cmdStatus(config) {
 
 // ─── Master commands ─────────────────────────────────────────────────────
 
-function cmdStart() {
+async function cmdStart() {
   const { Master } = require('./master');
   const master = new Master();
-  master.start();
+  await master.start();
 }
 
 // ─── CLI ─────────────────────────────────────────────────────────────────────
@@ -713,7 +783,10 @@ function main() {
 
   // Observer start (doesn't need fleet config)
   if (command === 'start') {
-    cmdStart();
+    cmdStart().catch(err => {
+      console.error(ANSI.red(`Fatal: ${err.message}`));
+      process.exit(1);
+    });
     return;
   }
 
