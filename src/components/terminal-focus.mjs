@@ -56,21 +56,28 @@ function focusAppleTerminal(ppid) {
   const tty = getTtyForPid(ppid);
   if (tty) {
     const ttyPath = `/dev/${tty}`;
+    // Use try block inside AppleScript: if tab selection fails, fall back to activate
     const script = `
 tell application "Terminal"
   activate
-  repeat with w in windows
-    repeat with t in tabs of w
-      if tty of t is "${escapeAppleScript(ttyPath)}" then
-        set selected of t to true
-        set index of w to 1
-        return
-      end if
+  try
+    repeat with w in windows
+      repeat with t in tabs of w
+        if tty of t is "${escapeAppleScript(ttyPath)}" then
+          set selected of t to true
+          set index of w to 1
+          return
+        end if
+      end repeat
     end repeat
-  end repeat
+  end try
 end tell`;
-    runAppleScript(script);
-    return;
+    try {
+      runAppleScript(script);
+      return;
+    } catch {
+      // Tab selection failed (e.g. -10000), fall back to simple activate
+    }
   }
   // Fallback: just activate Terminal (best effort — won't select specific tab)
   runAppleScript(`tell application "Terminal" to activate`);
