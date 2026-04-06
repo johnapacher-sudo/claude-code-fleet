@@ -157,8 +157,14 @@ function App({ master }) {
                     h(Text, { color: colors.idle },
                       '  System Settings > Privacy & Security > Automation > enable your terminal'),
                   )
-                : h(Text, { color: colors.modelAlias },
-                    '\u2717 Focus failed'),
+                : h(Box, { flexDirection: 'column' },
+                    h(Text, { color: colors.modelAlias },
+                      '\u2717 Focus failed'),
+                    focusStatus.detail
+                      ? h(Text, { color: colors.idle },
+                          `  ${focusStatus.detail}`)
+                      : null,
+                  ),
         )
       : null,
     h(Box, { paddingTop: 1 },

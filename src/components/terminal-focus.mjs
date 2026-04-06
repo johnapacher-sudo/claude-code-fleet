@@ -142,11 +142,13 @@ export function focusTerminal({ termProgram, itermSessionId, cwd, displayName, p
     }
     return { ok: true, name };
   } catch (err) {
-    // Check if this is a macOS permission denial (AppleScript/osascript error)
+    // Only detect actual macOS Automation permission denial
+    // -1743: errAEEventNotPermitted (user denied AppleEvent permission)
+    // "not allowed" from osascript when automation is blocked
     const msg = err.message || '';
-    if (msg.includes('-1743') || msg.includes('-10000') || msg.includes('not allowed') || msg.includes('AppleEvent') || msg.includes('osascript')) {
+    if (msg.includes('-1743') || msg.includes('not allowed')) {
       return { ok: false, reason: 'permission' };
     }
-    return { ok: false, reason: 'failed' };
+    return { ok: false, reason: 'failed', detail: msg.slice(0, 120) };
   }
 }
