@@ -143,15 +143,22 @@ function App({ master }) {
     ),
     // Focus status feedback
     focusStatus
-      ? h(Box, { paddingX: 1 },
+      ? h(Box, { paddingX: 1, flexDirection: 'column' },
           focusStatus.ok
             ? h(Text, { color: colors.running },
                 `\u2713 Focused ${focusStatus.name} \u2192 ${workers[selectedIdx]?.displayName || ''}`)
             : focusStatus.reason === 'unknown'
               ? h(Text, { color: colors.slow },
                   '\u26A0 No terminal info for this worker')
-              : h(Text, { color: colors.modelAlias },
-                  '\u2717 Focus failed'),
+              : focusStatus.reason === 'permission'
+                ? h(Box, { flexDirection: 'column' },
+                    h(Text, { color: colors.modelAlias },
+                      '\u2717 Permission denied — grant Automation/Accessibility access:'),
+                    h(Text, { color: colors.idle },
+                      '  System Settings > Privacy & Security > Automation'),
+                  )
+                : h(Text, { color: colors.modelAlias },
+                    '\u2717 Focus failed'),
         )
       : null,
     h(Box, { paddingTop: 1 },

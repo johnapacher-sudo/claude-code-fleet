@@ -141,7 +141,12 @@ export function focusTerminal({ termProgram, itermSessionId, cwd, displayName, p
         return { ok: false, reason: 'unknown' };
     }
     return { ok: true, name };
-  } catch {
+  } catch (err) {
+    // Check if this is a macOS permission denial (AppleScript/osascript error)
+    const msg = err.message || '';
+    if (msg.includes('-1743') || msg.includes('-10000') || msg.includes('not allowed') || msg.includes('AppleEvent') || msg.includes('osascript')) {
+      return { ok: false, reason: 'permission' };
+    }
     return { ok: false, reason: 'failed' };
   }
 }
