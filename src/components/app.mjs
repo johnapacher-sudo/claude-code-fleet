@@ -10,10 +10,16 @@ import { execSync } from 'child_process';
 const h = React.createElement;
 
 function getWorkerStatus(worker, now) {
-  if (worker.status === 'idle') return 'idle';
   const elapsed = now - worker.lastEventAt;
-  if (elapsed > 10 * 60 * 1000) return 'slow';
-  return 'active';
+  // If worker is currently executing a tool (has running action in current turn)
+  const hasRunningAction = worker.currentTurn?.actions?.some(a => a.status === 'running');
+  if (hasRunningAction) return 'active';
+  // If last event was recent, consider active
+  if (elapsed < 30 * 1000) return 'active';
+  // If last event was within 10 minutes, could be thinking/waiting
+  if (elapsed < 10 * 60 * 1000) return 'active';
+  // No recent activity
+  return 'idle';
 }
 
 function App({ master }) {
@@ -43,8 +49,8 @@ function App({ master }) {
     computedStatus: getWorkerStatus(w, now),
   }));
 
-  // Sort: active > slow > idle, then by sortMode
-  const statusOrder = { active: 0, slow: 1, idle: 2 };
+  // Sort: active > idle, then by sortMode
+  const statusOrder = { active: 0, idle: 1 };
   workers.sort((a, b) => {
     const sa = statusOrder[a.computedStatus] ?? 9;
     const sb = statusOrder[b.computedStatus] ?? 9;

@@ -7,8 +7,7 @@ import { TERMINAL_NAMES } from './terminal-focus.mjs';
 const h = React.createElement;
 
 function getStatusIcon(status) {
-  if (status === 'active' || status === 'running') return { icon: '\u25CF', color: colors.running };
-  if (status === 'slow') return { icon: '\u25CF', color: colors.slow };
+  if (status === 'active') return { icon: '\u25CF', color: colors.running };
   return { icon: '\u25CB', color: colors.idle };
 }
 
@@ -127,7 +126,7 @@ function HistoryTurn({ turn, now }) {
 }
 
 export function WorkerCard({ worker, now, isExpanded = false }) {
-  const statusIcon = getStatusIcon(worker.status);
+  const statusIcon = getStatusIcon(worker.computedStatus || worker.status);
   const elapsed = formatElapsed(now - worker.firstEventAt);
 
   // The previous turn(s) (for history display)
