@@ -51,7 +51,7 @@ class Master {
     const sid = payload.session_id;
     if (!sid) return;
 
-    // Stop event → close current turn, delete session file
+    // Stop event → close current turn (don't delete session file — let cleanup handle it)
     if (payload.event === 'Stop') {
       if (this.workers.has(sid)) {
         const worker = this.workers.get(sid);
@@ -65,7 +65,6 @@ class Master {
           worker.currentTurn = null;
         }
       }
-      this.deleteSessionFile(sid);
       if (this.tui) this.tui.scheduleRender();
       return;
     }

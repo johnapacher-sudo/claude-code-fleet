@@ -53,12 +53,16 @@ async function main() {
     } catch { /* ignore write failures */ }
   }
 
-  // Stop: clean up session file
+  // Stop: update session file status to stopped (don't delete — let master clean up)
   if (input.hook_event_name === 'Stop') {
     try {
       const sessionFile = path.join(SESSIONS_DIR, `${input.session_id}.json`);
-      fs.unlinkSync(sessionFile);
-    } catch { /* ignore — file may not exist */ }
+      if (fs.existsSync(sessionFile)) {
+        const data = JSON.parse(fs.readFileSync(sessionFile, 'utf-8'));
+        data.stoppedAt = Date.now();
+        fs.writeFileSync(sessionFile, JSON.stringify(data, null, 2));
+      }
+    } catch { /* ignore */ }
   }
 
   // PostToolUse: only tool_name and tool_input, skip tool_response
