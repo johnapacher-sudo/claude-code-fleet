@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { render, Box, Text, useApp, useInput } from 'ink';
 
 const h = React.createElement;
@@ -11,11 +11,10 @@ const COLOR_DIM = '#525252';
 const COLOR_NAME = '#d4d4d4';
 const COLOR_NAME_ACTIVE = '#e0e0e0';
 const COLOR_META = '#8b949e';
-const BG_ACTIVE = '#161b22';
-const BG_INACTIVE = '#0d1117';
+
+// ─── Selector ────────────────────────────────────────────────────────────────
 
 function Selector({ title, items, dangerMode, onSelect, onCancel }) {
-  const { exit } = useApp();
   const [selected, setSelected] = useState(0);
   const accent = dangerMode ? ACCENT_DANGER : ACCENT;
 
@@ -36,12 +35,9 @@ function Selector({ title, items, dangerMode, onSelect, onCancel }) {
   });
 
   return h(Box, { flexDirection: 'column' },
-    // Title
     h(Text, { color: accent, bold: true }, `\u2B22 ${title}`),
-    // Hints
     h(Text, { color: COLOR_DIM }, '\u2191\u2193 navigate \u00B7 enter select \u00B7 q cancel'),
     h(Box, { marginBottom: 1 }),
-    // Cards
     ...items.map((item, i) => {
       const isActive = i === selected;
       return h(Box, {
@@ -56,7 +52,6 @@ function Selector({ title, items, dangerMode, onSelect, onCancel }) {
         paddingLeft: 1,
         marginBottom: 1,
       },
-        // Row 1: label + detail
         h(Box, { justifyContent: 'space-between', width: '100%' },
           h(Box, { gap: 1 },
             isActive
@@ -71,17 +66,21 @@ function Selector({ title, items, dangerMode, onSelect, onCancel }) {
             ? h(Text, { color: COLOR_DIM }, item.detail)
             : null,
         ),
-        // Row 2: meta
         item.meta
           ? h(Text, { color: COLOR_META, dimColor: true }, `  ${item.meta}`)
           : null,
+        item.warning && isActive
+          ? h(Text, { color: '#fbbf24', bold: true }, `  \u26A0 ${item.warning}`)
+          : item.warning
+            ? h(Text, { color: '#525252' }, `  \u26A0 ${item.warning}`)
+            : null,
       );
     }),
   );
 }
 
 export function renderSelector({ title, items, dangerMode = false }) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     let resolved = false;
 
     const app = render(
@@ -93,7 +92,6 @@ export function renderSelector({ title, items, dangerMode = false }) {
           if (resolved) return;
           resolved = true;
           app.unmount();
-          // Print confirmation line
           process.stdout.write(
             `\x1b[38;2;117;139;250m\u276F\x1b[0m ` +
             `\x1b[38;2;74;222;128m${item.label}\x1b[0m` +
@@ -107,21 +105,22 @@ export function renderSelector({ title, items, dangerMode = false }) {
           resolved = true;
           app.unmount();
           process.stdout.write('\x1b[38;2;82;82;82mCancelled.\x1b[0m\n');
-          process.exit(1);
+          resolve(null);
         },
       })
     );
   });
 }
 
+// ─── Confirm Dialog ──────────────────────────────────────────────────────────
+
 function ConfirmDialog({ title, items, dangerMode, onConfirm, onCancel }) {
-  const { exit } = useApp();
   const accent = dangerMode ? ACCENT_DANGER : ACCENT;
 
   useInput((input, key) => {
-    if (input === 'y' || input === 'Y') {
+    if (input === 'y' || input === 'Y' || key.return) {
       onConfirm();
-    } else if (input === 'n' || input === 'N' || input === 'q' || (key.ctrl && input === 'c')) {
+    } else if (input === 'n' || input === 'N' || input === 'q' || (key.ctrl && input === 'c') || key.escape) {
       onCancel();
     }
   });
@@ -129,7 +128,6 @@ function ConfirmDialog({ title, items, dangerMode, onConfirm, onCancel }) {
   return h(Box, { flexDirection: 'column' },
     h(Text, { color: accent, bold: true }, `\u26A0 ${title}`),
     h(Box, { marginBottom: 1 }),
-    // Warning card
     h(Box, {
       flexDirection: 'column',
       borderStyle: 'bold',
@@ -149,18 +147,16 @@ function ConfirmDialog({ title, items, dangerMode, onConfirm, onCancel }) {
         : null,
     ),
     h(Box, { marginBottom: 1 }),
-    // y/n prompt
     h(Text, {},
-      h(Text, { color: '#4ade80' }, 'y') + ' confirm  \u00B7 ',
-      h(Text, { color: '#525252' }, 'n') + ' cancel',
+      h(Text, { color: CONFIRM_GREEN }, 'y/enter'), ' confirm  \u00B7 ',
+      h(Text, { color: '#525252' }, 'n/esc'), ' cancel',
     ),
   );
 }
 
 export function renderConfirm({ title, items, dangerMode = false }) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     let resolved = false;
-    const accent = dangerMode ? '#f85149' : '#a78bfa';
 
     const app = render(
       h(ConfirmDialog, {
@@ -177,110 +173,157 @@ export function renderConfirm({ title, items, dangerMode = false }) {
             (items.detail ? ` \x1b[38;2;82;82;82m${items.detail}\x1b[0m` : '') +
             '\n'
           );
-          resolve(items.value);
+          resolve(true);
         },
         onCancel: () => {
           if (resolved) return;
           resolved = true;
           app.unmount();
           process.stdout.write('\x1b[38;2;82;82;82mCancelled.\x1b[0m\n');
-          process.exit(1);
+          resolve(false);
         },
       })
     );
   });
 }
 
-function FormField({ field, isActive, value, onChange }) {
-  const { exit } = useApp();
-  const [cursor, setCursor] = useState(value || '');
+// ─── Input Form ──────────────────────────────────────────────────────────────
 
-  useInput((input, key) => {
-    if (key.leftArrow) {
-      const before = cursor.slice(0, -1);
-      onChange(field, before);
-      setCursor(before);
-    } else if (key.rightArrow || key.tab) {
-      // Move to next field (parent handles this)
-      return;
-    } else if (key.backspace || key.delete) {
-      const before = cursor.slice(0, -1);
-      onChange(field, before);
-      setCursor(before);
-    } else if (key.return) {
-      return;
-    } else if (input && !key.ctrl) {
-      const newVal = cursor + input;
-      onChange(field, newVal);
-      setCursor(newVal);
-    }
-  });
-
+function FormField({ field, isActive, value, error }) {
   const displayValue = value || '';
-  const cursorPos = cursor.length;
-  const before = displayValue.slice(0, cursorPos);
-  const after = displayValue.slice(cursorPos);
 
   return h(Box, { gap: 1 },
-    h(Text, { color: isActive ? '#a78bfa' : '#8b949e', bold: isActive }, `${field.label}:`),
-    h(Text, { color: '#e0e0e0' },
-      `${before}`,
-      isActive ? h(Text, { color: '#a78bfa', inverse: true }, '\u2588') : null,
-      `${after}`,
+    h(Text, { color: isActive ? (error ? '#f85149' : '#a78bfa') : '#8b949e', bold: isActive },
+      `${field.label}:`),
+    h(Box, {},
+      h(Text, { color: error ? '#f85149' : '#e0e0e0' },
+        displayValue,
+        isActive ? h(Text, { color: error ? '#f85149' : '#a78bfa', inverse: true }, '\u2588') : null,
+      ),
+      !displayValue && field.placeholder
+        ? h(Text, { color: error ? '#f85149' : '#525252', dimColor: !error },
+            error ? ` (${field.label} is required)` : ` (${field.placeholder})`)
+        : null,
     ),
-    field.placeholder && !value
-      ? h(Text, { color: '#525252', dimColor: true }, ` (${field.placeholder})`)
-      : null,
   );
 }
 
-function InputForm({ title, fields, values, onSubmit, onCancel }) {
-  const { exit } = useApp();
+function InputForm({ title, fields, values: initialValues, requiredFields, onSubmit, onCancel }) {
   const [currentField, setCurrentField] = useState(0);
-  const [formValues, setFormValues] = useState(values || {});
+  const [formValues, setFormValues] = useState(initialValues || {});
+  const [validationErrors, setValidationErrors] = useState({});
+  const [triedSubmit, setTriedSubmit] = useState(false);
 
   useInput((input, key) => {
-    if (input === 'q' || (key.ctrl && input === 'c')) {
+    // Cancel
+    if (key.ctrl && input === 'c') {
       onCancel();
       return;
     }
-    if (key.upArrow || (input === 'k' && !key.ctrl)) {
+    // Only q on non-text fields or with Ctrl
+    if (input === 'q' && key.ctrl) {
+      onCancel();
+      return;
+    }
+    // Escape cancels
+    if (key.escape) {
+      onCancel();
+      return;
+    }
+
+    // Navigation
+    if (key.upArrow) {
       setCurrentField(i => (i - 1 + fields.length) % fields.length);
+      return;
     }
-    if (key.downArrow || (input === 'j' && !key.ctrl)) {
+    if (key.downArrow) {
       setCurrentField(i => (i + 1) % fields.length);
+      return;
     }
-    if (key.tab || (key.rightArrow && !key.ctrl)) {
+    if (key.tab) {
       setCurrentField(i => (i + 1) % fields.length);
+      return;
     }
+
+    // Editing the current field
+    const field = fields[currentField];
+    const currentVal = formValues[field.label] || '';
+
+    if (key.backspace || key.delete) {
+      const newVal = currentVal.slice(0, -1);
+      setFormValues(prev => ({ ...prev, [field.label]: newVal }));
+      // Clear error for this field if user is editing
+      if (validationErrors[field.label]) {
+        setValidationErrors(prev => {
+          const next = { ...prev };
+          delete next[field.label];
+          return next;
+        });
+      }
+      return;
+    }
+
     if (key.return) {
+      // Check required fields
+      const required = requiredFields || [];
+      const errors = {};
+      let firstEmpty = -1;
+      for (let i = 0; i < fields.length; i++) {
+        const f = fields[i];
+        if (required.includes(f.label) && !formValues[f.label]) {
+          errors[f.label] = true;
+          if (firstEmpty === -1) firstEmpty = i;
+        }
+      }
+
+      if (Object.keys(errors).length > 0) {
+        setValidationErrors(errors);
+        setTriedSubmit(true);
+        // Jump to first empty required field
+        if (firstEmpty !== -1) setCurrentField(firstEmpty);
+        return;
+      }
+
       onSubmit(formValues);
+      return;
+    }
+
+    // Regular text input — only accept printable chars
+    if (input && !key.ctrl && !key.meta) {
+      const newVal = currentVal + input;
+      setFormValues(prev => ({ ...prev, [field.label]: newVal }));
+      // Clear error for this field
+      if (validationErrors[field.label]) {
+        setValidationErrors(prev => {
+          const next = { ...prev };
+          delete next[field.label];
+          return next;
+        });
+      }
     }
   });
 
-  const handleChange = (fieldName, newVal) => {
-    setFormValues(prev => ({ ...prev, [fieldName]: newVal }));
-  };
-
   return h(Box, { flexDirection: 'column' },
     h(Text, { color: '#a78bfa', bold: true }, `\u2B22 ${title}`),
-    h(Text, { color: '#525252' }, '\u2191\u2193 navigate \u00B7 tab next field \u00B7 enter confirm \u00B7 q cancel'),
+    h(Text, { color: COLOR_DIM },
+      '\u2191\u2193 navigate \u00B7 type to edit \u00B7 tab next \u00B7 enter confirm \u00B7 esc cancel'),
     h(Box, { marginBottom: 1 }),
     ...fields.map((field, i) => {
       const isActive = i === currentField;
+      const hasError = triedSubmit && validationErrors[field.label];
       return h(FormField, {
         key: field.label,
         field,
         isActive,
-        value: formValues[field.label] || field.value,
-        onChange: handleChange,
+        value: formValues[field.label] !== undefined ? formValues[field.label] : (field.value || ''),
+        error: hasError,
       });
     }),
   );
 }
 
-export function renderInput({ title, fields }) {
-  return new Promise((resolve, reject) => {
+export function renderInput({ title, fields, requiredFields }) {
+  return new Promise((resolve) => {
     let resolved = false;
     const initialValues = {};
     fields.forEach(f => { initialValues[f.label] = f.value || ''; });
@@ -290,6 +333,7 @@ export function renderInput({ title, fields }) {
         title,
         fields,
         values: initialValues,
+        requiredFields: requiredFields || [],
         onSubmit: (values) => {
           if (resolved) return;
           resolved = true;
@@ -305,7 +349,7 @@ export function renderInput({ title, fields }) {
           resolved = true;
           app.unmount();
           process.stdout.write('\x1b[38;2;82;82;82mCancelled.\x1b[0m\n');
-          process.exit(1);
+          resolve(null);
         },
       })
     );

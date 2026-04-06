@@ -332,10 +332,10 @@ async function cmdModelEdit() {
         fields: [
           { label: 'Name', value: entry.name || '', placeholder: 'e.g. opus-prod' },
           { label: 'Model ID', value: entry.model || '', placeholder: 'e.g. claude-opus-4-6' },
-          { label: 'API Key', value: '', placeholder: entry.apiKey ? `current: ${truncStr(entry.apiKey, 8)}**** (leave empty to keep)` : 'required' },
+          { label: 'API Key', value: entry.apiKey || '', placeholder: 'required' },
           { label: 'API Base URL', value: entry.apiBaseUrl || '', placeholder: 'https://api.anthropic.com (leave empty for default)' },
         ],
-        requiredFields: entry.apiKey ? ['Name', 'Model ID'] : ['Name', 'Model ID', 'API Key'],
+        requiredFields: ['Name', 'Model ID', 'API Key', 'API Base URL'],
       });
 
       if (!updated) continue selectLoop; // Esc from form → back to selector

@@ -105,9 +105,9 @@ function App({ master }) {
         setFocusStatus(result);
       }
 
-      // Auto-clear after 2 seconds
+      // Auto-clear after 15 seconds
       if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
-      focusTimerRef.current = setTimeout(() => setFocusStatus(null), 2000);
+      focusTimerRef.current = setTimeout(() => setFocusStatus(null), 15000);
     }
     // Number keys 1-9 to jump to worker
     const num = parseInt(input, 10);
