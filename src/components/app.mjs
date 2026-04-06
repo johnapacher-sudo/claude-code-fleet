@@ -153,9 +153,9 @@ function App({ master }) {
               : focusStatus.reason === 'permission'
                 ? h(Box, { flexDirection: 'column' },
                     h(Text, { color: colors.modelAlias },
-                      '\u2717 Permission denied — grant Automation/Accessibility access:'),
+                      '\u2717 macOS blocked focus — grant Automation access:'),
                     h(Text, { color: colors.idle },
-                      '  System Settings > Privacy & Security > Automation'),
+                      '  System Settings > Privacy & Security > Automation > enable your terminal'),
                   )
                 : h(Text, { color: colors.modelAlias },
                     '\u2717 Focus failed'),
