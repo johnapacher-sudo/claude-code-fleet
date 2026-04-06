@@ -51,14 +51,18 @@ class Master {
     const sid = payload.session_id;
     if (!sid) return;
 
-    // Stop event → close current turn with last assistant message as summary
+    // Stop event → close current turn, save last message
     if (payload.event === 'Stop') {
       if (this.workers.has(sid)) {
         const worker = this.workers.get(sid);
         worker.lastEventAt = Date.now();
         worker.status = 'idle';
         const msg = payload.last_assistant_message || '';
-        // If we have a current turn, close it with the message
+        // Always update lastMessage (persists independently of turns)
+        if (msg) {
+          worker.lastMessage = { text: msg, time: Date.now() };
+        }
+        // Close current turn
         if (worker.currentTurn) {
           worker.currentTurn.actions.forEach(a => a.status = 'done');
           if (msg) {
@@ -68,11 +72,6 @@ class Master {
           worker.turns.push(worker.currentTurn);
           if (worker.turns.length > 2) worker.turns.shift();
           worker.currentTurn = null;
-        } else if (msg) {
-          // No current turn but we have a message — create a turn for it
-          const turn = { summary: msg, summaryTime: Date.now(), actions: [] };
-          worker.turns.push(turn);
-          if (worker.turns.length > 2) worker.turns.shift();
         }
       }
       if (this.tui) this.tui.scheduleRender();
@@ -94,6 +93,7 @@ class Master {
         turns: [],           // completed turns (max 2)
         currentTurn: null,   // { summary, summaryTime, actions: [] } or null
         lastActions: [],     // flat list of last 3 actions (across turns)
+        lastMessage: null,   // latest AI response message (never overwritten by turns)
         termProgram: null,
         itermSessionId: null,
         pid: null,
@@ -220,6 +220,7 @@ class Master {
           turns: [],
           currentTurn: null,
           lastActions: [],
+          lastMessage: null,
           termProgram: data.term_program || null,
           itermSessionId: data.iterm_session_id || null,
           pid: data.pid || null,

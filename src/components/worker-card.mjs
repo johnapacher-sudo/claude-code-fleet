@@ -151,6 +151,12 @@ export function WorkerCard({ worker, now, isExpanded = false }) {
     ? worker.turns
     : worker.turns.length > 0 ? [worker.turns[worker.turns.length - 1]] : [];
 
+  // Truncate message for display
+  const msgText = worker.lastMessage?.text;
+  const msgDisplay = msgText
+    ? (msgText.length > 120 ? msgText.slice(0, 117) + '...' : msgText)
+    : null;
+
   return h(Box, { flexDirection: 'column', paddingX: 1, paddingBottom: 1 },
     // Header row
     h(Box, { justifyContent: 'space-between' },
@@ -169,6 +175,12 @@ export function WorkerCard({ worker, now, isExpanded = false }) {
       ),
       h(Text, { color: colors.idle }, elapsed),
     ),
+    // Last message (always visible, independent of turns)
+    msgDisplay
+      ? h(Box, { paddingLeft: 1 },
+          h(Text, { color: colors.aiSummary, italic: true }, msgDisplay),
+        )
+      : null,
     // Current turn (expanded)
     h(CurrentTurn, { turn: worker.currentTurn, now }),
     // History turns (collapsed shows last, expanded shows all)
