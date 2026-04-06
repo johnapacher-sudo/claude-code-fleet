@@ -58,6 +58,7 @@ class Master {
         worker.lastEventAt = Date.now();
         worker.status = 'idle';
         const msg = payload.last_assistant_message || '';
+        worker.awaitsInput = true; // Stopped → waiting for user input
         // Always update lastMessage (persists independently of turns)
         if (msg) {
           worker.lastMessage = { text: msg, time: Date.now() };
@@ -90,6 +91,7 @@ class Master {
         firstEventAt: Date.now(),
         lastEventAt: Date.now(),
         status: 'idle',
+        awaitsInput: false,  // true after Stop, cleared by PostToolUse
         turns: [],           // completed turns (max 2)
         currentTurn: null,   // { summary, summaryTime, actions: [] } or null
         lastActions: [],     // flat list of last 3 actions (across turns)
@@ -127,6 +129,7 @@ class Master {
     // PostToolUse → add action to current turn
     if (payload.event === 'PostToolUse') {
       worker.status = 'active';
+      worker.awaitsInput = false; // Tool use means Claude is actively working
       // Ensure a current turn exists
       if (!worker.currentTurn) {
         worker.currentTurn = { summary: '', summaryTime: Date.now(), actions: [] };
@@ -220,7 +223,7 @@ class Master {
           turns: [],
           currentTurn: null,
           lastActions: [],
-          lastMessage: null,
+          lastMessage: data.lastMessage || null,
           termProgram: data.term_program || null,
           itermSessionId: data.iterm_session_id || null,
           pid: data.pid || null,

@@ -17,6 +17,8 @@ function getWorkerStatus(worker, now) {
   // If worker is currently executing a tool (has running action in current turn)
   const hasRunningAction = worker.currentTurn?.actions?.some(a => a.status === 'running');
   if (hasRunningAction) return 'active';
+  // After Stop: waiting for user input, not thinking
+  if (worker.awaitsInput) return 'idle';
   // Process alive but no running tool and recent activity → likely thinking
   if (elapsed < 10 * 60 * 1000) return 'thinking';
   // No recent activity
