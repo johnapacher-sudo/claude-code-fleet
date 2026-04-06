@@ -126,6 +126,22 @@ function HistoryTurn({ turn, now }) {
   );
 }
 
+function LastActions({ actions, now }) {
+  if (!actions || actions.length === 0) return null;
+  return h(Box, { flexDirection: 'column', paddingLeft: 1 },
+    ...actions.map((a, i) =>
+      h(Box, { key: i, justifyContent: 'space-between' },
+        h(Box, { gap: 1 },
+          h(Text, { color: colors.doneMark }, '\u2713'),
+          h(Text, { color: colors.toolName }, a.tool),
+          a.target ? h(Text, { color: colors.target }, a.target) : null,
+        ),
+        h(Text, { color: colors.idle }, formatAgo(now - a.time)),
+      )
+    )
+  );
+}
+
 export function WorkerCard({ worker, now, isExpanded = false }) {
   const statusIcon = getStatusIcon(worker.computedStatus || worker.status);
   const elapsed = formatElapsed(now - worker.firstEventAt);
@@ -159,5 +175,7 @@ export function WorkerCard({ worker, now, isExpanded = false }) {
     ...historyTurns.map((turn, i) =>
       h(HistoryTurn, { key: `hist-${i}`, turn, now })
     ),
+    // Last 3 actions (shown when no current turn is active)
+    !worker.currentTurn ? h(LastActions, { actions: worker.lastActions, now }) : null,
   );
 }

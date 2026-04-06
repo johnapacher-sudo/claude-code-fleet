@@ -93,6 +93,7 @@ class Master {
         status: 'idle',
         turns: [],           // completed turns (max 2)
         currentTurn: null,   // { summary, summaryTime, actions: [] } or null
+        lastActions: [],     // flat list of last 3 actions (across turns)
         termProgram: null,
         itermSessionId: null,
         pid: null,
@@ -141,6 +142,9 @@ class Master {
       const tool = parts[0] || summary;
       const target = parts.length > 1 ? summary.slice(tool.length + 1) : '';
       actions.push({ tool, target, time: Date.now(), status: 'running' });
+      // Also update flat lastActions (keep last 3)
+      worker.lastActions.push({ tool, target, time: Date.now() });
+      if (worker.lastActions.length > 3) worker.lastActions.shift();
     }
 
     // Notification → close current turn, start new one
@@ -215,6 +219,7 @@ class Master {
           status: 'idle',
           turns: [],
           currentTurn: null,
+          lastActions: [],
           termProgram: data.term_program || null,
           itermSessionId: data.iterm_session_id || null,
           pid: data.pid || null,
