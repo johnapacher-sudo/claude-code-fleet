@@ -12,16 +12,13 @@ function getWorkerStatus(worker, now) {
   // Trust master's offline status (set by cleanupExpired)
   if (worker.status === 'offline') return 'offline';
   // Quick check: if ppid is known and process is dead, show offline immediately
-  // (don't wait for cleanup cycle)
   if (worker.ppid && !isProcessAlive(worker.ppid)) return 'offline';
   const elapsed = now - worker.lastEventAt;
   // If worker is currently executing a tool (has running action in current turn)
   const hasRunningAction = worker.currentTurn?.actions?.some(a => a.status === 'running');
   if (hasRunningAction) return 'active';
-  // If last event was recent, consider active
-  if (elapsed < 30 * 1000) return 'active';
-  // If last event was within 10 minutes, could be thinking/waiting
-  if (elapsed < 10 * 60 * 1000) return 'active';
+  // Process alive but no running tool and recent activity → likely thinking
+  if (elapsed < 10 * 60 * 1000) return 'thinking';
   // No recent activity
   return 'idle';
 }
@@ -58,8 +55,8 @@ function App({ master }) {
     computedStatus: getWorkerStatus(w, now),
   }));
 
-  // Sort: active > idle > offline, then by sortMode
-  const statusOrder = { active: 0, idle: 1, offline: 2 };
+  // Sort: active > thinking > idle > offline, then by sortMode
+  const statusOrder = { active: 0, thinking: 1, idle: 2, offline: 3 };
   workers.sort((a, b) => {
     const sa = statusOrder[a.computedStatus] ?? 9;
     const sb = statusOrder[b.computedStatus] ?? 9;

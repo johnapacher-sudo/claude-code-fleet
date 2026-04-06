@@ -8,6 +8,7 @@ const h = React.createElement;
 
 function getStatusIcon(status) {
   if (status === 'active') return { icon: '\u25CF', color: colors.running };
+  if (status === 'thinking') return { icon: '\u25CF', color: colors.spinnerColor, spinning: true };
   if (status === 'offline') return { icon: '\u2717', color: colors.modelAlias };
   return { icon: '\u25CB', color: colors.idle };
 }
@@ -157,11 +158,15 @@ export function WorkerCard({ worker, now, isExpanded = false }) {
     ? (msgText.length > 120 ? msgText.slice(0, 117) + '...' : msgText)
     : null;
 
+  const isThinking = (worker.computedStatus || worker.status) === 'thinking';
+
   return h(Box, { flexDirection: 'column', paddingX: 1, paddingBottom: 1 },
     // Header row
     h(Box, { justifyContent: 'space-between' },
       h(Box, { gap: 1 },
-        h(Text, { color: statusIcon.color }, statusIcon.icon),
+        statusIcon.spinning
+          ? h(Text, { color: statusIcon.color }, h(Spinner, { type: 'dots' }), ' ')
+          : h(Text, { color: statusIcon.color }, statusIcon.icon),
         h(Text, { color: colors.projectName, bold: true }, worker.displayName),
         worker.fleetModelName
           ? h(Text, { color: colors.modelAlias }, worker.fleetModelName)
@@ -173,7 +178,9 @@ export function WorkerCard({ worker, now, isExpanded = false }) {
           ? h(Text, { color: colors.idle }, TERMINAL_NAMES[worker.termProgram] || worker.termProgram)
           : null,
       ),
-      h(Text, { color: colors.idle }, elapsed),
+      isThinking
+        ? h(Text, { color: colors.spinnerColor }, 'thinking\u2026')
+        : h(Text, { color: colors.idle }, elapsed),
     ),
     // Last message (always visible, independent of turns)
     msgDisplay
