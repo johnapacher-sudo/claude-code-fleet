@@ -153,6 +153,7 @@ class Master {
     // Notification → close current turn, start new one
     if (payload.event === 'Notification') {
       worker.status = 'active';
+      worker.awaitsInput = false;
       if (worker.currentTurn) {
         // Close current turn: mark all actions done, set summary
         worker.currentTurn.actions.forEach(a => a.status = 'done');

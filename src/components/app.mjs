@@ -13,15 +13,22 @@ function getWorkerStatus(worker, now) {
   if (worker.status === 'offline') return 'offline';
   // Quick check: if ppid is known and process is dead, show offline immediately
   if (worker.ppid && !isProcessAlive(worker.ppid)) return 'offline';
-  const elapsed = now - worker.lastEventAt;
   // If worker is currently executing a tool (has running action in current turn)
   const hasRunningAction = worker.currentTurn?.actions?.some(a => a.status === 'running');
   if (hasRunningAction) return 'active';
   // After Stop: waiting for user input, not thinking
   if (worker.awaitsInput) return 'idle';
-  // Process alive but no running tool and recent activity → likely thinking
-  if (elapsed < 10 * 60 * 1000) return 'thinking';
-  // No recent activity
+  // "thinking" only when we have evidence: currentTurn with done actions AND recent
+  // This means Claude was actively using tools and is between calls
+  if (worker.currentTurn?.actions?.length > 0) {
+    const allDone = worker.currentTurn.actions.every(a => a.status === 'done');
+    if (allDone) {
+      const lastAction = worker.currentTurn.actions[worker.currentTurn.actions.length - 1];
+      const timeSinceLastAction = now - lastAction.time;
+      if (timeSinceLastAction < 90 * 1000) return 'thinking'; // within 90s of last tool completing
+    }
+  }
+  // Default: idle
   return 'idle';
 }
 
