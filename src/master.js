@@ -53,6 +53,8 @@ class Master {
 
     // Stop event → close current turn with last assistant message as summary
     if (payload.event === 'Stop') {
+      // Debug: log Stop payload fields
+      process.stderr.write(`[fleet] Stop event: last_assistant_message=${payload.last_assistant_message ? payload.last_assistant_message.slice(0, 60) + '...' : '(empty)'}\n`);
       if (this.workers.has(sid)) {
         const worker = this.workers.get(sid);
         worker.lastEventAt = Date.now();

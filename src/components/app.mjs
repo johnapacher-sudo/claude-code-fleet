@@ -10,6 +10,8 @@ import { execSync } from 'child_process';
 const h = React.createElement;
 
 function getWorkerStatus(worker, now) {
+  // If process is confirmed dead, show as offline
+  if (worker.ppid && !isProcessAlive(worker.ppid)) return 'offline';
   const elapsed = now - worker.lastEventAt;
   // If worker is currently executing a tool (has running action in current turn)
   const hasRunningAction = worker.currentTurn?.actions?.some(a => a.status === 'running');
@@ -20,6 +22,11 @@ function getWorkerStatus(worker, now) {
   if (elapsed < 10 * 60 * 1000) return 'active';
   // No recent activity
   return 'idle';
+}
+
+function isProcessAlive(pid) {
+  if (!pid) return false;
+  try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
 function App({ master }) {
@@ -49,8 +56,8 @@ function App({ master }) {
     computedStatus: getWorkerStatus(w, now),
   }));
 
-  // Sort: active > idle, then by sortMode
-  const statusOrder = { active: 0, idle: 1 };
+  // Sort: active > idle > offline, then by sortMode
+  const statusOrder = { active: 0, idle: 1, offline: 2 };
   workers.sort((a, b) => {
     const sa = statusOrder[a.computedStatus] ?? 9;
     const sb = statusOrder[b.computedStatus] ?? 9;

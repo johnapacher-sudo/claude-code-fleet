@@ -8,6 +8,7 @@ const h = React.createElement;
 
 function getStatusIcon(status) {
   if (status === 'active') return { icon: '\u25CF', color: colors.running };
+  if (status === 'offline') return { icon: '\u2717', color: colors.modelAlias };
   return { icon: '\u25CB', color: colors.idle };
 }
 
