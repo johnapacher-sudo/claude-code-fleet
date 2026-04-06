@@ -8,7 +8,8 @@
   },
   "scripts": {
     "start": "node src/index.js",
-    "fleet": "node src/index.js"
+    "fleet": "node src/index.js",
+    "test": "vitest run"
   },
   "keywords": [
     "claude",
@@ -25,5 +26,10 @@
   },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.2",
+    "ink-testing-library": "^4.0.0",
+    "vitest": "^4.1.2"
   }
 }
