@@ -51,7 +51,7 @@ class Master {
     const sid = payload.session_id;
     if (!sid) return;
 
-    // Stop event → close current turn (don't delete session file — let cleanup handle it)
+    // Stop event → close current turn with last assistant message as summary
     if (payload.event === 'Stop') {
       if (this.workers.has(sid)) {
         const worker = this.workers.get(sid);
@@ -60,6 +60,11 @@ class Master {
         // Close current turn
         if (worker.currentTurn) {
           worker.currentTurn.actions.forEach(a => a.status = 'done');
+          // Use last_assistant_message as turn summary
+          if (payload.last_assistant_message) {
+            worker.currentTurn.summary = payload.last_assistant_message;
+            worker.currentTurn.summaryTime = Date.now();
+          }
           worker.turns.push(worker.currentTurn);
           if (worker.turns.length > 2) worker.turns.shift();
           worker.currentTurn = null;
