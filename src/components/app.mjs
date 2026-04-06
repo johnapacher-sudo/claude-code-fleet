@@ -5,12 +5,14 @@ import { WorkerCard } from './worker-card.mjs';
 import { Footer } from './footer.mjs';
 import { colors } from './colors.mjs';
 import { focusTerminal } from './terminal-focus.mjs';
-import { execSync } from 'child_process';
 
 const h = React.createElement;
 
 function getWorkerStatus(worker, now) {
-  // If process is confirmed dead, show as offline
+  // Trust master's offline status (set by cleanupExpired)
+  if (worker.status === 'offline') return 'offline';
+  // Quick check: if ppid is known and process is dead, show offline immediately
+  // (don't wait for cleanup cycle)
   if (worker.ppid && !isProcessAlive(worker.ppid)) return 'offline';
   const elapsed = now - worker.lastEventAt;
   // If worker is currently executing a tool (has running action in current turn)

@@ -53,23 +53,26 @@ class Master {
 
     // Stop event → close current turn with last assistant message as summary
     if (payload.event === 'Stop') {
-      // Debug: log Stop payload fields
-      process.stderr.write(`[fleet] Stop event: last_assistant_message=${payload.last_assistant_message ? payload.last_assistant_message.slice(0, 60) + '...' : '(empty)'}\n`);
       if (this.workers.has(sid)) {
         const worker = this.workers.get(sid);
         worker.lastEventAt = Date.now();
         worker.status = 'idle';
-        // Close current turn
+        const msg = payload.last_assistant_message || '';
+        // If we have a current turn, close it with the message
         if (worker.currentTurn) {
           worker.currentTurn.actions.forEach(a => a.status = 'done');
-          // Use last_assistant_message as turn summary
-          if (payload.last_assistant_message) {
-            worker.currentTurn.summary = payload.last_assistant_message;
+          if (msg) {
+            worker.currentTurn.summary = msg;
             worker.currentTurn.summaryTime = Date.now();
           }
           worker.turns.push(worker.currentTurn);
           if (worker.turns.length > 2) worker.turns.shift();
           worker.currentTurn = null;
+        } else if (msg) {
+          // No current turn but we have a message — create a turn for it
+          const turn = { summary: msg, summaryTime: Date.now(), actions: [] };
+          worker.turns.push(turn);
+          if (worker.turns.length > 2) worker.turns.shift();
         }
       }
       if (this.tui) this.tui.scheduleRender();
@@ -162,9 +165,20 @@ class Master {
   cleanupExpired() {
     const now = Date.now();
     for (const [sid, w] of this.workers) {
-      const expired = now - w.lastEventAt > EXPIRE_THRESHOLD;
       const dead = w.ppid && !this.isProcessAlive(w.ppid);
-      if (expired || dead) {
+      // Process dead — mark offline immediately
+      if (dead) {
+        w.status = 'offline';
+        // Delete from map only after 30 minutes (no longer useful)
+        if (now - w.lastEventAt > 30 * 60 * 1000) {
+          this.workers.delete(sid);
+          this.deleteSessionFile(sid);
+        }
+        continue;
+      }
+      // Process alive but no events for 3 hours — likely stale
+      const expired = now - w.lastEventAt > EXPIRE_THRESHOLD;
+      if (expired) {
         this.workers.delete(sid);
         this.deleteSessionFile(sid);
       }

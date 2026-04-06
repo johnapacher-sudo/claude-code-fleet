@@ -80,13 +80,6 @@ async function main() {
   // Stop: capture AI's final response text
   if (input.hook_event_name === 'Stop') {
     payload.last_assistant_message = (input.last_assistant_message || '').slice(0, 500);
-    // Debug: log what we receive for Stop event
-    if (!input.last_assistant_message) {
-      const debugFile = path.join(SESSIONS_DIR, 'stop-debug.json');
-      try {
-        fs.writeFileSync(debugFile, JSON.stringify({ keys: Object.keys(input), sample: input.last_assistant_message }, null, 2));
-      } catch {}
-    }
   }
 
   // fleet run environment variable
