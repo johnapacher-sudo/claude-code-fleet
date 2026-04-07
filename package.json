@@ -1,6 +1,6 @@
 {
   "name": "@dking/claude-code-fleet",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Run multiple Claude Code instances with different API keys and models in parallel",
   "main": "src/index.js",
   "bin": {
@@ -30,6 +30,7 @@
   "devDependencies": {
     "@vitest/coverage-v8": "^4.1.2",
     "ink-testing-library": "^4.0.0",
+    "rewire": "^9.0.1",
     "vitest": "^4.1.2"
   }
 }

@@ -6,29 +6,26 @@ import { Header } from '../../src/components/header.mjs';
 const h = React.createElement;
 
 describe('Header', () => {
-  it('renders Fleet title and sort mode', () => {
-    const { lastFrame } = render(h(Header, { workers: [], sortMode: 'time' }));
-    expect(lastFrame()).toContain('Fleet');
-    expect(lastFrame()).toContain('sort:time');
+  it('renders Fleet Master title', () => {
+    const { lastFrame } = render(h(Header, { workers: [] }));
+    expect(lastFrame()).toContain('Fleet Master');
   });
 
-  it('renders processing/idle/offline counts with icons', () => {
+  it('renders active/idle counts with icons', () => {
     const workers = [
-      { computedStatus: 'processing' },
-      { computedStatus: 'processing' },
+      { computedStatus: 'active' },
+      { computedStatus: 'active' },
       { computedStatus: 'idle' },
-      { computedStatus: 'offline' },
     ];
-    const { lastFrame } = render(h(Header, { workers, sortMode: 'name' }));
+    const { lastFrame } = render(h(Header, { workers }));
     const out = lastFrame();
-    expect(out).toContain('\u25CF 2');  // processing ●
+    expect(out).toContain('\u25CF 2');  // active ●
     expect(out).toContain('\u25CB 1');  // idle ○
-    expect(out).toContain('\u2717 1');  // offline ✗
   });
 
-  it('renders total count', () => {
+  it('renders total session count', () => {
     const workers = [{ computedStatus: 'idle' }, { computedStatus: 'idle' }];
-    const { lastFrame } = render(h(Header, { workers, sortMode: 'time' }));
-    expect(lastFrame()).toContain('2 total');
+    const { lastFrame } = render(h(Header, { workers }));
+    expect(lastFrame()).toContain('2 sessions');
   });
 });

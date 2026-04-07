@@ -839,4 +839,16 @@ function main() {
   }
 }
 
-main();
+if (require.main === module) main();
+
+module.exports = {
+  stripAnsi, truncStr, modelMeta, modelWarning, modelItem,
+  run, checkDeps,
+  loadState, saveState, isProcessAlive, cleanupState,
+  configSearchPaths, findConfigFile, loadConfig, validateConfig,
+  getModelsPath, loadModels, saveModels,
+  cmdModelList, cmdInit, cmdHooksStatus, cmdLs, cmdStatus, cmdDown,
+  cmdHooksInstall, cmdHooksRemove,
+  filterInstances,
+  parseArgs, main, ANSI, CONFIG_FILENAME, GLOBAL_CONFIG_DIR, STATE_FILE,
+};
