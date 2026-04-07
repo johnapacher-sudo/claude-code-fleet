@@ -8,13 +8,14 @@
 
 Run multiple Claude Code instances with different API keys, models, and endpoints in parallel — from one terminal, zero dependencies.
 
-## Why
+## Key Features
 
-- Run multiple Claude Code workers simultaneously (e.g., Opus for architecture, Sonnet for implementation, Haiku for quick tasks)
-- Use different API keys to distribute rate limits
-- Route requests through different endpoints or proxies
-- **Observe all active Claude Code processes** from a single terminal dashboard
-- Manage it all from one terminal with no external dependencies
+- **Observer Dashboard** — Real-time TUI that auto-discovers all Claude Code processes and shows their status, actions, and AI messages
+- **Terminal Focus** — Jump to any worker's terminal window/tab with one keypress (iTerm, Terminal.app, VSCode, Cursor, Warp, WezTerm)
+- **Session Persistence** — Workers survive master restarts; session state is persisted to disk and auto-resumed
+- **Model Profiles** — Named profiles for quick interactive sessions with different models and API keys
+- **Fleet Mode** — Define multiple instances in a config file and manage them as background processes
+- **Interactive UI** — Arrow-key selectors, confirmation dialogs, and multi-field input forms, all in the terminal
 
 ## Prerequisites
 
@@ -54,6 +55,17 @@ fleet down
 
 ## Three Modes
 
+### Observer Mode (Dashboard)
+
+Start a real-time terminal dashboard that observes all active Claude Code processes.
+
+- `fleet start` launches the observer TUI
+- Automatically discovers all Claude Code processes via async hooks (SessionStart, PostToolUse, Stop, Notification)
+- Shows session ID, model name, working directory, tool usage, and AI messages per worker
+- Workers appear when they start and are cleaned up when they stop (3+ hours inactive) or their process dies (30 minutes)
+- Session state is persisted to disk — workers survive master restarts
+- No config file required — just run `fleet start` and launch Claude Code processes
+
 ### Model Profile Mode
 
 Manage named model profiles and launch single interactive Claude Code sessions.
@@ -61,17 +73,6 @@ Manage named model profiles and launch single interactive Claude Code sessions.
 - Profiles are stored globally at `~/.config/claude-code-fleet/models.json`
 - `fleet run` launches a foreground interactive session with `stdio` inherited
 - If no `--model` flag is given, an interactive arrow-key menu appears
-
-### Observer Mode (Dashboard)
-
-Start a real-time terminal dashboard that observes all active Claude Code processes.
-
-- `fleet start` launches the observer TUI
-- Automatically discovers all Claude Code processes via async hooks
-- Shows session ID, model name, working directory, and recent operations per worker
-- Workers appear when they start (SessionStart hook) and disappear when they stop (Stop hook)
-- Inactive workers (3+ hours without events) are automatically cleaned up
-- No config file required — just run `fleet start` and launch Claude Code processes
 
 ### Fleet Mode (Background)
 
@@ -161,19 +162,69 @@ Define multiple instances in a config file and manage them as background process
 }
 ```
 
-## How It Works
+## Observer Dashboard
 
-### Observer Mode (`fleet start`)
+### How It Works
 
-1. Copies hook-client.js to `~/.config/claude-code-fleet/hooks/`
-2. Injects async hooks into `~/.claude/settings.json` (SessionStart, PostToolUse, Stop, Notification)
-3. Starts Unix socket server at `~/.config/claude-code-fleet/fleet.sock`
-4. When any Claude Code process starts, hooks fire and send events to the socket
-5. Master tracks each session by `session_id`, recording operations and model info
-6. TUI renders real-time status with 100ms debounce
-7. Workers inactive for 3+ hours are automatically removed
+1. Copies `hook-client.js` to `~/.config/claude-code-fleet/hooks/`
+2. Injects async hooks into `~/.claude/settings.json` for four Claude Code events
+3. Starts a Unix socket server at `~/.config/claude-code-fleet/fleet.sock`
+4. When any Claude Code process fires a hook, the client sends a JSON event to the socket
+5. Master tracks each session by `session_id`, recording model info, tool usage, and AI messages
+6. TUI re-renders in real-time with 100ms debounce
+7. Persists session metadata to disk — survives master restarts
+8. Automatically removes workers whose process has died (30 min) or been inactive (3+ hours)
 
-### Fleet Mode (`fleet up`)
+### Hook Events
+
+| Event | What It Captures |
+|-------|-----------------|
+| `SessionStart` | Model name, process PID/PPID, terminal program, iTerm session ID |
+| `PostToolUse` | Tool name and input (Edit/Write/Read show filename, Bash shows command, Grep shows pattern) |
+| `Stop` | Last assistant message (truncated to 500 chars), marks worker as idle |
+| `Notification` | Starts a new turn with the notification message as summary |
+
+### Worker States
+
+| State | Meaning |
+|-------|---------|
+| `active` | Worker is running a tool action |
+| `thinking` | All actions in current turn are done, but activity within last 90 seconds (shows spinner) |
+| `idle` | Worker finished and is awaiting user input |
+| `offline` | Process is dead or master marked it |
+
+Workers are sorted by status priority (active → thinking → idle → offline), then by last event time or alphabetically (toggle with Tab).
+
+### Keyboard Controls
+
+| Key | Action |
+|-----|--------|
+| `j` / ↓ | Scroll down |
+| `k` / ↑ | Scroll up |
+| `1`–`9` | Jump to worker by position |
+| Space | Expand/collapse worker detail view |
+| Enter | Focus the terminal window/tab where that worker is running |
+| Tab | Toggle sort mode (by time / by name) |
+| `q` / Ctrl+C | Quit |
+
+### Terminal Focus
+
+Press Enter on any worker to jump to its terminal window/tab. Supported terminals (macOS):
+
+| Terminal | Method |
+|----------|--------|
+| **iTerm2** | AppleScript to select the specific session by ID |
+| **Terminal.app** | Finds TTY device by PID, selects matching tab via AppleScript |
+| **VSCode** | Opens the workspace folder with `open -a "Visual Studio Code"` |
+| **Cursor** | Opens the workspace folder with `open -a "Cursor"` |
+| **Warp** | Raises the window containing the worker via AppleScript |
+| **WezTerm** | Raises the window containing the worker via AppleScript |
+
+If automation permission is not granted, you'll get a clear error message with instructions.
+
+## Fleet Mode
+
+### How It Works
 
 1. Reads config file for instance definitions
 2. Validates configuration (required fields, duplicate names)
@@ -194,11 +245,38 @@ fleet hooks remove    # Clean uninstall
 
 ## Interactive UI
 
-The built-in arrow-key selector supports:
+All interactive prompts are built with Ink (React for the terminal):
+
+### Selector (Arrow-key menu)
 
 - Arrow keys or `j`/`k` to navigate
 - Enter to confirm selection
-- `q` or `Ctrl+C` to abort
+- `q` or Ctrl+C to abort
+- Supports danger mode (red accent for destructive actions like delete)
+
+### Confirm Dialog
+
+- Yes/No confirmation with optional danger styling
+- `y`/Enter to confirm, `n`/`q`/Escape to cancel
+
+### Input Form
+
+- Multi-field forms with up/down/tab navigation
+- Inline text editing with backspace/delete support
+- Required field validation with error highlighting
+- Auto-jumps to first empty required field on submit
+
+## Data & State
+
+All state is stored under `~/.config/claude-code-fleet/`:
+
+| Path | Purpose |
+|------|---------|
+| `models.json` | Saved model profiles |
+| `fleet-state.json` | Background instance PIDs (Fleet mode) |
+| `fleet.sock` | Unix domain socket (transient, Observer mode) |
+| `hooks/hook-client.js` | Hook script for Claude Code events |
+| `sessions/<id>.json` | Per-session metadata for Observer recovery |
 
 ## License
 

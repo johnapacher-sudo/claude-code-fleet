@@ -8,13 +8,14 @@
 
 在一个终端中并行运行多个 Claude Code 实例，支持不同的 API Key、模型和端点 — 零外部依赖。
 
-## 为什么需要
+## 核心特性
 
-- 同时运行多个 Claude Code 工作进程（例如：Opus 负责架构设计，Sonnet 负责代码实现，Haiku 处理快速任务）
-- 使用不同的 API Key 分散速率限制
-- 通过不同端点或代理路由请求
-- **从单一终端面板观察所有活跃的 Claude Code 进程**
-- 在一个终端中管理所有实例，无需任何外部依赖
+- **观察者面板** — 实时 TUI 自动发现所有 Claude Code 进程，展示状态、操作和 AI 消息
+- **终端聚焦** — 一键跳转到任意工作进程所在的终端窗口/标签页（支持 iTerm、Terminal.app、VSCode、Cursor、Warp、WezTerm）
+- **会话持久化** — 工作进程在 master 重启后依然存在；会话状态持久化到磁盘并自动恢复
+- **模型配置** — 命名配置文件，可快速启动使用不同模型和 API Key 的交互式会话
+- **Fleet 模式** — 在配置文件中定义多个实例，作为后台进程进行管理
+- **交互式界面** — 方向键选择器、确认对话框、多字段输入表单，全部在终端中运行
 
 ## 前置要求
 
@@ -54,6 +55,17 @@ fleet down
 
 ## 三种模式
 
+### 观察者模式（面板）
+
+启动实时终端面板，观察所有活跃的 Claude Code 进程。
+
+- `fleet start` 启动观察者 TUI
+- 自动发现所有 Claude Code 进程（通过 async hooks：SessionStart、PostToolUse、Stop、Notification）
+- 显示每个进程的会话 ID、模型名称、工作目录、工具使用和 AI 消息
+- 进程启动时自动出现，停止时（3+ 小时无事件）或进程死亡后（30 分钟）自动清理
+- 会话状态持久化到磁盘 — 工作进程在 master 重启后依然存在
+- 无需配置文件 — 直接运行 `fleet start` 然后启动 Claude Code 进程即可
+
 ### 模型配置模式
 
 管理命名的模型配置，并启动单个交互式 Claude Code 会话。
@@ -61,17 +73,6 @@ fleet down
 - 配置文件存储在 `~/.config/claude-code-fleet/models.json`
 - `fleet run` 启动前台交互式会话，继承 `stdio`
 - 如果未指定 `--model` 参数，将显示交互式箭头键选择菜单
-
-### 观察者模式（面板）
-
-启动实时终端面板，观察所有活跃的 Claude Code 进程。
-
-- `fleet start` 启动观察者 TUI
-- 自动发现所有 Claude Code 进程（通过 async hooks）
-- 显示每个进程的会话 ID、模型名称、工作目录和最近操作
-- 进程启动时自动出现，停止时自动消失
-- 3 小时以上无事件的条目自动清理
-- 无需配置文件 — 直接运行 `fleet start` 然后启动 Claude Code 进程即可
 
 ### Fleet 模式（后台）
 
@@ -161,19 +162,69 @@ fleet down
 }
 ```
 
-## 工作原理
+## 观察者面板
 
-### 观察者模式（`fleet start`）
+### 工作原理
 
-1. 复制 hook-client.js 到 `~/.config/claude-code-fleet/hooks/`
-2. 注入 async hooks 到 `~/.claude/settings.json`（SessionStart、PostToolUse、Stop、Notification）
+1. 复制 `hook-client.js` 到 `~/.config/claude-code-fleet/hooks/`
+2. 注入 async hooks 到 `~/.claude/settings.json`，监听四个 Claude Code 事件
 3. 启动 Unix socket 服务，监听 `~/.config/claude-code-fleet/fleet.sock`
-4. 当任何 Claude Code 进程启动时，hooks 触发并将事件发送到 socket
-5. Master 通过 `session_id` 跟踪每个会话，记录操作和模型信息
-6. TUI 以 100ms 防抖渲染实时状态
-7. 超过 3 小时无事件的条目自动移除
+4. 当任何 Claude Code 进程触发 hook 时，客户端将 JSON 事件发送到 socket
+5. Master 通过 `session_id` 跟踪每个会话，记录模型信息、工具使用和 AI 消息
+6. TUI 以 100ms 防抖实时渲染
+7. 会话元数据持久化到磁盘 — master 重启后自动恢复
+8. 自动移除进程已死亡（30 分钟）或长期无活动（3+ 小时）的工作进程
 
-### Fleet 模式（`fleet up`）
+### Hook 事件
+
+| 事件 | 捕获内容 |
+|------|----------|
+| `SessionStart` | 模型名称、进程 PID/PPID、终端程序、iTerm 会话 ID |
+| `PostToolUse` | 工具名称和输入（Edit/Write/Read 显示文件名，Bash 显示命令，Grep 显示模式） |
+| `Stop` | 最后一条助手消息（截断至 500 字符），将工作进程标记为空闲 |
+| `Notification` | 以通知消息作为摘要开启新一轮对话 |
+
+### 工作进程状态
+
+| 状态 | 含义 |
+|------|------|
+| `active` | 工作进程正在执行工具操作 |
+| `thinking` | 当前轮次所有操作已完成，但 90 秒内有活动（显示旋转动画） |
+| `idle` | 工作进程已完成，等待用户输入 |
+| `offline` | 进程已死亡或被 master 标记 |
+
+工作进程按状态优先级排序（active → thinking → idle → offline），同级按最后事件时间或字母顺序排列（用 Tab 切换）。
+
+### 键盘控制
+
+| 按键 | 功能 |
+|------|------|
+| `j` / ↓ | 向下滚动 |
+| `k` / ↑ | 向上滚动 |
+| `1`–`9` | 按位置跳转到工作进程 |
+| Space | 展开/折叠工作进程详情视图 |
+| Enter | 聚焦到该工作进程所在的终端窗口/标签页 |
+| Tab | 切换排序模式（按时间 / 按名称） |
+| `q` / Ctrl+C | 退出 |
+
+### 终端聚焦
+
+在任何工作进程上按 Enter 即可跳转到其所在的终端窗口/标签页。支持的终端（仅 macOS）：
+
+| 终端 | 方式 |
+|------|------|
+| **iTerm2** | 通过 AppleScript 按 ID 选择特定会话 |
+| **Terminal.app** | 通过 PID 查找 TTY 设备，通过 AppleScript 选择匹配的标签页 |
+| **VSCode** | 使用 `open -a "Visual Studio Code"` 打开工作区目录 |
+| **Cursor** | 使用 `open -a "Cursor"` 打开工作区目录 |
+| **Warp** | 通过 AppleScript 激活包含该工作进程的窗口 |
+| **WezTerm** | 通过 AppleScript 激活包含该工作进程的窗口 |
+
+如果未授予自动化权限，会显示清晰的错误信息和操作指引。
+
+## Fleet 模式
+
+### 工作原理
 
 1. 读取配置文件获取实例定义
 2. 验证配置（必填字段、名称唯一性）
@@ -194,11 +245,38 @@ fleet hooks remove    # 完整卸载
 
 ## 交互式界面
 
-内置的箭头键选择器支持：
+所有交互式提示均基于 Ink（终端中的 React 框架）构建：
+
+### 选择器（方向键菜单）
 
 - 方向键或 `j`/`k` 导航
 - Enter 确认选择
-- `q` 或 `Ctrl+C` 取消
+- `q` 或 Ctrl+C 取消
+- 支持危险模式（红色强调，用于删除等破坏性操作）
+
+### 确认对话框
+
+- Yes/No 确认，可选危险样式
+- `y`/Enter 确认，`n`/`q`/Escape 取消
+
+### 输入表单
+
+- 多字段表单，支持上/下/Tab 导航
+- 内联文本编辑，支持退格/删除
+- 必填字段验证，带错误高亮
+- 提交时自动跳转到第一个空的必填字段
+
+## 数据与状态
+
+所有状态存储在 `~/.config/claude-code-fleet/` 目录下：
+
+| 路径 | 用途 |
+|------|------|
+| `models.json` | 已保存的模型配置 |
+| `fleet-state.json` | 后台实例 PID（Fleet 模式） |
+| `fleet.sock` | Unix 域套接字（临时的，观察者模式） |
+| `hooks/hook-client.js` | Claude Code 事件的 Hook 脚本 |
+| `sessions/<id>.json` | 每个会话的元数据（观察者恢复用） |
 
 ## 许可证
 
