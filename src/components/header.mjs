@@ -8,6 +8,7 @@ export function Header({ workers }) {
   const total = workers.length;
   const running = workers.filter(w => w.computedStatus === 'active').length;
   const idle = total - running;
+  const autoRunning = workers.filter(w => w.type === 'auto' && w.computedStatus === 'active').length;
 
   return h(Box, {
     justifyContent: 'space-between',
@@ -19,6 +20,7 @@ export function Header({ workers }) {
     h(Box, { gap: 1 },
       running > 0 ? h(Text, { color: colors.running }, `\u25CF ${running}`) : null,
       idle > 0 ? h(Text, { color: colors.idle }, `\u25CB ${idle}`) : null,
+      autoRunning > 0 ? h(Text, { color: colors.running }, `\u2699 ${autoRunning}`) : null,
       h(Text, { color: colors.idle }, `${total} session${total !== 1 ? 's' : ''}`),
     ),
   );

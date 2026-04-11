@@ -19,6 +19,7 @@ const EXPIRE_THRESHOLD = 3 * 60 * 60 * 1000;
 class Master {
   constructor() {
     this.workers = new Map();
+    this.workerManager = null;
     this.socketServer = null;
     this.tui = null;
     this.cleanupTimer = null;
@@ -245,6 +246,57 @@ class Master {
   deleteSessionFile(sid) {
     const filePath = path.join(SESSIONS_DIR, `${sid}.json`);
     try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+  }
+
+  handleWorkerEvent(type, data) {
+    if (type === 'taskStarted' || type === 'taskCompleted' || type === 'taskFailed') {
+      const task = data.task;
+      const sid = 'auto-' + task.id;
+
+      if (type === 'taskCompleted' || type === 'taskFailed') {
+        // Remove from workers map (task is archived)
+        this.workers.delete(sid);
+      } else {
+        // taskStarted — add/update virtual worker
+        this.workers.set(sid, {
+          type: 'auto',
+          sessionId: sid,
+          sessionIdShort: task.id.slice(-4),
+          displayName: task.title,
+          cwd: task.cwd,
+          modelName: task.modelProfile || 'default',
+          fleetModelName: task.modelProfile || 'default',
+          firstEventAt: new Date(task.startedAt || task.createdAt).getTime(),
+          lastEventAt: Date.now(),
+          status: 'active',
+          awaitsInput: false,
+          turns: [],
+          currentTurn: { summary: '', summaryTime: Date.now(), actions: [{ tool: 'Worker', target: task.title, time: Date.now(), status: 'running' }] },
+          lastActions: [],
+          lastMessage: null,
+          termProgram: null,
+          itermSessionId: null,
+          pid: null,
+          ppid: null,
+          _queuePosition: null,
+          _queueTotal: null,
+        });
+      }
+
+      if (this.tui) this.tui.scheduleRender();
+    }
+  }
+
+  getWorkerQueueStatus() {
+    let pending = 0;
+    let running = 0;
+    for (const [, w] of this.workers) {
+      if (w.type === 'auto') {
+        if (w.status === 'active') running++;
+        else pending++;
+      }
+    }
+    return { pending, running };
   }
 }
 

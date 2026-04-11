@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Box, Text, useApp, useInput, render } from 'ink';
 import { Header } from './header.mjs';
 import { WorkerCard } from './worker-card.mjs';
+import { WorkerQueueCard } from './worker-queue-card.mjs';
 import { Footer } from './footer.mjs';
 import { colors } from './colors.mjs';
 import { focusTerminal } from './terminal-focus.mjs';
@@ -74,6 +75,11 @@ function App({ master }) {
     return b.lastEventAt - a.lastEventAt;
   });
 
+  // Split workers into observer and auto groups
+  const observerWorkers = workers.filter(w => w.type !== 'auto');
+  const autoWorkers = workers.filter(w => w.type === 'auto');
+  const workerQueueInfo = master.getWorkerQueueStatus ? master.getWorkerQueueStatus() : { pending: 0, running: 0 };
+
   // Clamp selection when workers change
   useEffect(() => {
     if (workers.length === 0) return;
@@ -137,30 +143,79 @@ function App({ master }) {
     }
   });
 
+  const autoOffset = observerWorkers.length;
+  const allWorkersEmpty = observerWorkers.length === 0 && autoWorkers.length === 0;
+
   return h(Box, { flexDirection: 'column' },
     h(Header, { workers }),
     h(Box, { flexDirection: 'column', paddingTop: 1 },
-      workers.length === 0
+      // Observer Workers section
+      observerWorkers.length > 0
+        ? h(Box, { flexDirection: 'column' },
+            h(Text, { color: colors.separator }, '\u2500\u2500 Observer Workers \u2500\u2500'),
+            observerWorkers.map((w, i) =>
+              h(Box, { key: w.sessionId, flexDirection: 'column' },
+                h(Box, {
+                  flexDirection: 'column',
+                  borderStyle: i === selectedIdx ? 'single' : undefined,
+                  borderColor: i === selectedIdx ? colors.idle : undefined,
+                  paddingLeft: i === selectedIdx ? 0 : 1,
+                },
+                  h(WorkerCard, { worker: w, now, isExpanded: expanded.has(w.sessionId) }),
+                ),
+                i < observerWorkers.length - 1 || autoWorkers.length > 0
+                  ? h(Text, { color: colors.separator }, '\u2500'.repeat(50))
+                  : null,
+              ),
+            ),
+          )
+        : null,
+
+      // Auto Worker Queue section
+      autoWorkers.length > 0
+        ? h(Box, { flexDirection: 'column' },
+            h(Text, { color: colors.separator },
+              `\u2500\u2500 Auto Worker Queue (${workerQueueInfo.pending} pending, ${workerQueueInfo.running} running) \u2500\u2500`),
+            autoWorkers.map((w, i) => {
+              const globalIdx = autoOffset + i;
+              return h(Box, { key: w.sessionId, flexDirection: 'column' },
+                h(Box, {
+                  flexDirection: 'column',
+                  borderStyle: globalIdx === selectedIdx ? 'single' : undefined,
+                  borderColor: globalIdx === selectedIdx ? colors.idle : undefined,
+                  paddingLeft: globalIdx === selectedIdx ? 0 : 1,
+                },
+                  h(WorkerQueueCard, {
+                    task: {
+                      ...w,
+                      id: w.sessionId.replace('auto-', ''),
+                      status: w.status === 'active' ? 'running' : 'pending',
+                      title: w.displayName,
+                      modelProfile: w.fleetModelName,
+                      startedAt: w.firstEventAt,
+                      queuePosition: w._queuePosition,
+                      queueTotal: w._queueTotal,
+                    },
+                    now,
+                    isExpanded: expanded.has(w.sessionId),
+                  }),
+                ),
+                i < autoWorkers.length - 1
+                  ? h(Text, { color: colors.separator }, '\u2500'.repeat(50))
+                  : null,
+              );
+            }),
+          )
+        : null,
+
+      // No workers message
+      allWorkersEmpty
         ? h(Box, { paddingX: 1 },
             h(Text, { color: colors.idle },
               'No active workers. Start claude processes to see them here.',
             ),
           )
-        : workers.map((w, i) =>
-            h(Box, { key: w.sessionId, flexDirection: 'column' },
-              h(Box, {
-                flexDirection: 'column',
-                borderStyle: i === selectedIdx ? 'single' : undefined,
-                borderColor: i === selectedIdx ? colors.idle : undefined,
-                paddingLeft: i === selectedIdx ? 0 : 1,
-              },
-                h(WorkerCard, { worker: w, now, isExpanded: expanded.has(w.sessionId) }),
-              ),
-              i < workers.length - 1
-                ? h(Text, { color: colors.separator }, '\u2500'.repeat(50))
-                : null,
-            ),
-          ),
+        : null,
     ),
     // Focus status feedback
     focusStatus
