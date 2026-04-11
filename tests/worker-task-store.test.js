@@ -285,3 +285,40 @@ describe('getArchivedTask', () => {
     expect(store.getArchivedTask('task-nope')).toBeNull();
   });
 });
+
+describe('WorkerTaskStore getArchiveDates', () => {
+  let tmpDir;
+  let store;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-dates-test-'));
+    const { WorkerTaskStore: WTS } = require('../src/worker-task-store.js');
+    store = new WTS(tmpDir);
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('returns empty array when no archives', () => {
+    expect(store.getArchiveDates()).toEqual([]);
+  });
+
+  it('returns dates sorted descending (newest first)', () => {
+    const archiveDir = path.join(tmpDir, 'worker-archive');
+    for (const d of ['2026-04-09', '2026-04-11', '2026-04-10']) {
+      fs.writeFileSync(path.join(archiveDir, `${d}.json`), JSON.stringify({
+        date: d, tasks: [], summary: { total: 0, completed: 0, failed: 0, totalDurationMs: 0 },
+      }));
+    }
+    const dates = store.getArchiveDates();
+    expect(dates).toEqual(['2026-04-11', '2026-04-10', '2026-04-09']);
+  });
+
+  it('ignores non-json files', () => {
+    const archiveDir = path.join(tmpDir, 'worker-archive');
+    fs.writeFileSync(path.join(archiveDir, '2026-04-11.json'), '{}');
+    fs.writeFileSync(path.join(archiveDir, 'notes.txt'), 'ignore me');
+    expect(store.getArchiveDates()).toEqual(['2026-04-11']);
+  });
+});

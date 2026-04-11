@@ -201,6 +201,15 @@ class WorkerTaskStore {
 
     return null;
   }
+
+  getArchiveDates() {
+    if (!fs.existsSync(this._archiveDir)) return [];
+    return fs.readdirSync(this._archiveDir)
+      .filter(f => f.endsWith('.json'))
+      .map(f => f.replace('.json', ''))
+      .sort()
+      .reverse();
+  }
 }
 
 module.exports = { WorkerTaskStore };

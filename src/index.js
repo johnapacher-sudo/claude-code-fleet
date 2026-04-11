@@ -875,40 +875,127 @@ function cmdWorkerImport(args) {
   }
 }
 
-function cmdWorkerReport(args) {
-  const date = args[0] || new Date().toISOString().slice(0, 10);
+async function cmdWorkerReport(args) {
   const store = getWorkerStore();
-  const archive = store.getArchive(date);
+  const selectorPath = path.join(__dirname, 'components', 'selector.mjs');
+  const { renderSelector } = await import(selectorPath);
 
-  if (!archive || !archive.tasks || archive.tasks.length === 0) {
-    console.log(ANSI.yellow(`  No tasks found for ${date}.`));
-    return;
-  }
+  // If a date argument is given, skip date selector and go directly to task list
+  const initialDate = args[0] || null;
 
-  console.log(ANSI.bold(`\n  Daily report for ${date}:\n`));
-  for (const t of archive.tasks) {
-    const statusStr = t.status === 'completed' ? ANSI.green(t.status) : ANSI.red(t.status);
-    const duration = t.result && t.result.durationMs ? `${(t.result.durationMs / 1000).toFixed(1)}s` : 'N/A';
-    const cost = t.result && t.result.totalCostUsd != null ? `$${t.result.totalCostUsd.toFixed(4)}` : 'N/A';
-    const summary = t.result && t.result.claudeResult ? truncStr(t.result.claudeResult, 60) : '';
-    console.log(`  ${statusStr}  ${ANSI.bold(t.id)}  ${duration}  ${cost}`);
-    console.log(`    ${ANSI.dim(t.title)}`);
-    if (summary) {
-      console.log(`    ${ANSI.dim('result:')} ${summary}`);
+  dateLoop: while (true) {
+    let selectedDate;
+
+    if (initialDate) {
+      selectedDate = initialDate;
+      // Only skip selector once — after viewing, loop back to selector
+    } else {
+      const dates = store.getArchiveDates();
+      if (dates.length === 0) {
+        console.log(ANSI.yellow('  No worker reports found.'));
+        console.log(ANSI.dim('  Run fleet worker add <prompt> to create tasks.'));
+        return;
+      }
+
+      const dateItems = dates.map(d => {
+        const archive = store.getArchive(d);
+        const s = (archive && archive.summary) || {};
+        const completed = s.completed || 0;
+        const failed = s.failed || 0;
+        const total = s.total || 0;
+        const cost = s.totalCostUsd ? `$${s.totalCostUsd.toFixed(3)}` : '';
+        const duration = s.totalDurationMs ? `${(s.totalDurationMs / 1000).toFixed(0)}s` : '';
+        return {
+          label: d,
+          detail: `${total} tasks`,
+          meta: `${ANSI.green('✓')} ${completed}  ${ANSI.red('✗')} ${failed}  ${duration}${cost ? '  ' + cost : ''}`,
+          value: d,
+        };
+      });
+
+      selectedDate = await renderSelector({ title: 'Worker Reports', items: dateItems });
+      if (!selectedDate) return; // cancelled
+    }
+
+    const archive = store.getArchive(selectedDate);
+    if (!archive || !archive.tasks || archive.tasks.length === 0) {
+      console.log(ANSI.yellow(`  No tasks found for ${selectedDate}.`));
+      if (!initialDate) continue;
+      return;
+    }
+
+    taskLoop: while (true) {
+      // Build task list items
+      const backItem = { label: '\u2190 Back to dates', detail: '', value: '__back__' };
+
+      const taskItems = archive.tasks.map(t => {
+        const icon = t.status === 'completed' ? ANSI.green('✓') : ANSI.red('✗');
+        const duration = t.result && t.result.durationMs ? `${(t.result.durationMs / 1000).toFixed(1)}s` : '';
+        const cost = t.result && t.result.totalCostUsd != null ? `$${t.result.totalCostUsd.toFixed(3)}` : '';
+        const model = t.modelProfile || 'default';
+        return {
+          label: `${icon} ${t.title}`,
+          detail: `${duration}${cost ? '  ' + cost : ''}`,
+          meta: `${model}  ${truncStr(t.cwd || '', 40)}`,
+          value: t.id,
+        };
+      });
+
+      const selectedTaskId = await renderSelector({
+        title: `Tasks on ${selectedDate}  (${archive.tasks.length} total)`,
+        items: [backItem, ...taskItems],
+      });
+
+      if (!selectedTaskId || selectedTaskId === '__back__') {
+        continue dateLoop;
+      }
+
+      // Show full task detail
+      const task = archive.tasks.find(t => t.id === selectedTaskId);
+      if (!task) continue taskLoop;
+
+      const statusIcon = task.status === 'completed' ? ANSI.green('✓ completed') : ANSI.red('✗ failed');
+      const duration = task.result && task.result.durationMs ? `${(task.result.durationMs / 1000).toFixed(1)}s` : 'N/A';
+      const cost = task.result && task.result.totalCostUsd != null ? `$${task.result.totalCostUsd.toFixed(3)}` : 'N/A';
+      const model = task.modelProfile || 'default';
+      const created = task.createdAt ? task.createdAt.replace('T', ' ').slice(0, 19) : 'N/A';
+      const completed = task.completedAt ? task.completedAt.replace('T', ' ').slice(0, 19) : 'N/A';
+
+      console.log('\n' + '─'.repeat(60));
+      console.log(ANSI.bold(`  ${task.title}`));
+      console.log('─'.repeat(60));
+      console.log(`  Status:     ${statusIcon}`);
+      console.log(`  Model:      ${model}`);
+      console.log(`  Priority:   ${task.priority}`);
+      console.log(`  Duration:   ${duration}`);
+      console.log(`  Cost:       ${cost}`);
+      console.log(`  Working Dir: ${task.cwd}`);
+      console.log(`  Created:    ${created}`);
+      console.log(`  Completed:  ${completed}`);
+      console.log(`\n  ${ANSI.bold('── Prompt ──')}`);
+      console.log(`  ${task.prompt}`);
+
+      if (task.result) {
+        console.log(`\n  ${ANSI.bold('── Result ──')}`);
+        if (task.result.claudeResult) {
+          // Indent each line of the result for readability
+          console.log(task.result.claudeResult.split('\n').map(l => `  ${l}`).join('\n'));
+        }
+        if (task.result.stderr) {
+          console.log(`\n  ${ANSI.bold('── Stderr ──')}`);
+          console.log(ANSI.red(`  ${task.result.stderr}`));
+        }
+      }
+      console.log('\n' + ANSI.dim('  Press Enter to go back...'));
+
+      await new Promise(resolve => {
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+        rl.question('', () => { rl.close(); resolve(); });
+      });
+
+      continue taskLoop;
     }
   }
-
-  // Aggregate summary
-  const s = archive.summary || {};
-  console.log(ANSI.bold('\n  Summary:'));
-  console.log(`    total: ${s.total || 0}  completed: ${s.completed || 0}  failed: ${s.failed || 0}`);
-  if (s.totalDurationMs) {
-    console.log(`    total duration: ${(s.totalDurationMs / 1000).toFixed(1)}s`);
-  }
-  if (s.totalCostUsd) {
-    console.log(`    total cost: $${s.totalCostUsd.toFixed(4)}`);
-  }
-  console.log();
 }
 
 function cmdWorkerShow(args) {
@@ -1153,7 +1240,7 @@ function main() {
       case 'add': cmdWorkerAdd(args, opts); break;
       case 'list': case 'ls': cmdWorkerList(opts); break;
       case 'import': cmdWorkerImport(args); break;
-      case 'report': cmdWorkerReport(args); break;
+      case 'report': cmdWorkerReport(args).catch(err => { console.error(ANSI.red(`Fatal: ${err.message}`)); process.exit(1); }); break;
       case 'show': cmdWorkerShow(args); break;
       default:
         console.error(ANSI.red(`Unknown worker command: ${workerCmd || '(none)'}`));
