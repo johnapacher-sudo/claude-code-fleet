@@ -23,6 +23,20 @@ Execution rules:
    ## Issues (if any)
    - Unresolved problems or assumptions made`;
 
+function wrapWorkerPrompt(task) {
+  return [
+    '<worker-context>',
+    'execution: autonomous background task',
+    `task-id: ${task.id}`,
+    'timeout: 3 hours',
+    '</worker-context>',
+    '',
+    '<user-prompt>',
+    task.prompt,
+    '</user-prompt>',
+  ].join('\n');
+}
+
 class WorkerRunner {
   /**
    * @param {object} options
@@ -204,4 +218,4 @@ function _buildMergedSettings(envOverrides) {
   return settings;
 }
 
-module.exports = { WorkerRunner, SYSTEM_PROMPT };
+module.exports = { WorkerRunner, SYSTEM_PROMPT, wrapWorkerPrompt };

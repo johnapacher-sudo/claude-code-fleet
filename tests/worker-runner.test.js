@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-const { WorkerRunner, SYSTEM_PROMPT } = await import('../src/worker-runner.js');
+const { WorkerRunner, SYSTEM_PROMPT, wrapWorkerPrompt } = await import('../src/worker-runner.js');
 
 describe('WorkerRunner', () => {
   it('runs a task and returns result', async () => {
@@ -54,5 +54,42 @@ describe('SYSTEM_PROMPT', () => {
     expect(SYSTEM_PROMPT).toContain('## Changes');
     expect(SYSTEM_PROMPT).toContain('## Result');
     expect(SYSTEM_PROMPT).toContain('## Issues');
+  });
+});
+
+describe('wrapWorkerPrompt', () => {
+  it('wraps user prompt in XML tags with task metadata', async () => {
+    const mod = await import('../src/worker-runner.js');
+    const task = { id: 'task-abc123', prompt: 'Fix the login bug' };
+    const result = mod.wrapWorkerPrompt(task);
+
+    expect(result).toContain('<worker-context>');
+    expect(result).toContain('execution: autonomous background task');
+    expect(result).toContain('task-id: task-abc123');
+    expect(result).toContain('timeout: 3 hours');
+    expect(result).toContain('</worker-context>');
+    expect(result).toContain('<user-prompt>');
+    expect(result).toContain('Fix the login bug');
+    expect(result).toContain('</user-prompt>');
+  });
+
+  it('preserves user prompt verbatim including special characters', async () => {
+    const mod = await import('../src/worker-runner.js');
+    const task = { id: 'task-x', prompt: 'Use <div> & "quotes" and\nnewlines' };
+    const result = mod.wrapWorkerPrompt(task);
+
+    expect(result).toContain('Use <div> & "quotes" and\nnewlines');
+  });
+
+  it('places user-prompt after worker-context with blank line separator', async () => {
+    const mod = await import('../src/worker-runner.js');
+    const task = { id: 'task-y', prompt: 'hello' };
+    const result = mod.wrapWorkerPrompt(task);
+
+    const ctxEnd = result.indexOf('</worker-context>');
+    const promptStart = result.indexOf('<user-prompt>');
+    expect(promptStart).toBeGreaterThan(ctxEnd);
+    // Blank line between sections
+    expect(result.slice(ctxEnd + '</worker-context>'.length, promptStart)).toContain('\n\n');
   });
 });
