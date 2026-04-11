@@ -31,6 +31,12 @@ class WorkerTaskStore {
     }
   }
 
+  // ─── Public getters ────────────────────────────────────────────────────────
+
+  get baseDir() {
+    return this._baseDir;
+  }
+
   // ─── Queue file helpers ──────────────────────────────────────────────────
 
   _readQueue() {
