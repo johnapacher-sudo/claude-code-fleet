@@ -59,7 +59,12 @@ class WorkerRunner {
    */
   run(task, modelConfig) {
     return new Promise((resolve) => {
-      const args = ['-p', task.prompt, '--dangerously-skip-permissions'];
+      const args = [
+        '-p', wrapWorkerPrompt(task),
+        '--dangerously-skip-permissions',
+        '--disallowedTools', 'AskUserQuestion',
+        '--append-system-prompt', SYSTEM_PROMPT,
+      ];
 
       // Build settings override — merge with user's existing settings to preserve
       // skills, hooks, and other configuration

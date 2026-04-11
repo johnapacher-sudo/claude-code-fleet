@@ -93,3 +93,15 @@ describe('wrapWorkerPrompt', () => {
     expect(result.slice(ctxEnd + '</worker-context>'.length, promptStart)).toContain('\n\n');
   });
 });
+
+describe('autonomous mode integration', () => {
+  it('wrapWorkerPrompt and SYSTEM_PROMPT together form the complete prompt', () => {
+    const task = { id: 'task-integ', prompt: 'do work', cwd: process.cwd() };
+    const wrapped = wrapWorkerPrompt(task);
+
+    expect(wrapped).toContain('task-id: task-integ');
+    expect(wrapped).toContain('do work');
+    expect(SYSTEM_PROMPT.length).toBeGreaterThan(100);
+    expect(SYSTEM_PROMPT).toContain('autonomous');
+  });
+});
