@@ -37,7 +37,12 @@ class WorkerTaskStore {
     try {
       const raw = fs.readFileSync(this._queuePath, 'utf8');
       return JSON.parse(raw);
-    } catch {
+    } catch (err) {
+      // Re-throw permission/I/O errors that are not recoverable
+      if (err.code === 'EACCES' || err.code === 'EISDIR' || err.code === 'EMFILE' || err.code === 'ENFILE') {
+        throw err;
+      }
+      // File not found or corrupted JSON – recoverable
       return { tasks: [] };
     }
   }
@@ -51,7 +56,7 @@ class WorkerTaskStore {
   addTask(input) {
     const queue = this._readQueue();
     const task = {
-      id: `task-${Date.now()}`,
+      id: `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       title: input.title || (input.prompt.length > 60 ? input.prompt.slice(0, 60) + '...' : input.prompt),
       prompt: input.prompt,
       priority: input.priority ?? 5,
@@ -159,7 +164,7 @@ class WorkerTaskStore {
   getArchive(date) {
     const archivePath = path.join(this._archiveDir, `${date}.json`);
     try {
-      return JSON.parse(fs.readFileSync(archivePath, 'utf8'));
+      return JSON.parse(JSON.stringify(JSON.parse(fs.readFileSync(archivePath, 'utf8'))));
     } catch {
       return null;
     }
@@ -181,7 +186,7 @@ class WorkerTaskStore {
         );
         if (archive && Array.isArray(archive.tasks)) {
           const found = archive.tasks.find(t => t.id === id);
-          if (found) return found;
+          if (found) return { ...found };
         }
       } catch {
         // Skip corrupted files

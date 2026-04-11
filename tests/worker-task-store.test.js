@@ -54,7 +54,7 @@ describe('addTask', () => {
   it('creates pending task with correct defaults', () => {
     const store = createStore();
     const task = store.addTask({ prompt: 'Do something' });
-    expect(task.id).toMatch(/^task-\d+$/);
+    expect(task.id).toMatch(/^task-\d+-[a-z0-9]+$/);
     expect(task.prompt).toBe('Do something');
     expect(task.status).toBe('pending');
     expect(task.priority).toBe(5);
