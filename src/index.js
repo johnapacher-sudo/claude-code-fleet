@@ -537,6 +537,8 @@ function cmdUp(config, onlyNames) {
       claudeArgs.push('--settings', JSON.stringify({ env: claudeSettingsEnv }));
     }
 
+    console.log(claudeArgs)
+
     const child = spawn('claude', claudeArgs, {
       cwd,
       env,
@@ -663,6 +665,296 @@ function cmdStatus(config) {
   }
 }
 
+// ─── Worker commands ─────────────────────────────────────────────────────────
+
+function getWorkerStore() {
+  const { WorkerTaskStore } = require('./worker-task-store');
+  return new WorkerTaskStore(GLOBAL_CONFIG_DIR);
+}
+
+function cmdWorkerStart(opts) {
+  const pidPath = path.join(GLOBAL_CONFIG_DIR, 'worker.pid');
+  if (fs.existsSync(pidPath)) {
+    const pid = parseInt(fs.readFileSync(pidPath, 'utf8'), 10);
+    if (isProcessAlive(pid)) {
+      console.error(ANSI.red(`Worker already running (pid ${pid})`));
+      process.exit(1);
+    }
+    // Stale PID file — clean up
+    try { fs.unlinkSync(pidPath); } catch { /* ignore */ }
+  }
+
+  const store = getWorkerStore();
+  const { WorkerManager } = require('./worker-manager');
+  const manager = new WorkerManager(store, {
+    concurrency: opts.concurrency ?? 1,
+    pollInterval: opts.pollInterval ?? 5,
+    timeout: opts.timeout ?? 600,
+    onTaskEvent(type, data) {
+      if (type === 'taskStarted') {
+        console.log(ANSI.cyan(`  [worker] started task ${data.taskId} (slot ${data.slotIdx})`));
+      } else if (type === 'taskCompleted') {
+        console.log(ANSI.green(`  [worker] completed task ${data.taskId} (slot ${data.slotIdx})`));
+      } else if (type === 'taskFailed') {
+        console.log(ANSI.red(`  [worker] failed task ${data.taskId} (slot ${data.slotIdx})`));
+      }
+    },
+  });
+
+  manager.start();
+
+  const shutdown = () => {
+    console.log(ANSI.yellow('\n  Shutting down worker...'));
+    manager.stop();
+    process.exit(0);
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+
+  console.log(ANSI.green('  Worker started'));
+  console.log(ANSI.dim(`  concurrency=${opts.concurrency ?? 1} pollInterval=${opts.pollInterval ?? 5}s timeout=${opts.timeout ?? 600}s`));
+  console.log(ANSI.dim('  Press Ctrl+C to stop'));
+}
+
+function cmdWorkerStop() {
+  const pidPath = path.join(GLOBAL_CONFIG_DIR, 'worker.pid');
+  if (!fs.existsSync(pidPath)) {
+    console.log(ANSI.yellow('Worker is not running (no PID file found).'));
+    return;
+  }
+
+  const pid = parseInt(fs.readFileSync(pidPath, 'utf8'), 10);
+  try {
+    process.kill(pid, 'SIGTERM');
+    console.log(ANSI.green(`  Worker stopped (pid ${pid})`));
+  } catch {
+    console.log(ANSI.yellow(`  Worker process ${pid} already exited`));
+    // Clean up stale PID file
+    try { fs.unlinkSync(pidPath); } catch { /* ignore */ }
+  }
+}
+
+function cmdWorkerAdd(args, opts) {
+  const prompt = args[0];
+  if (!prompt) {
+    console.error(ANSI.red('Usage: fleet worker add <prompt> [--title <title>] [--model <profile>] [--priority <n>] [--cwd <path>]'));
+    process.exit(1);
+  }
+
+  let modelProfile = opts.model || null;
+  if (modelProfile) {
+    const data = loadModels();
+    if (!data.models.some(m => m.name === modelProfile)) {
+      console.error(ANSI.red(`Model profile "${modelProfile}" not found.`));
+      console.error(`Available: ${data.models.map(m => m.name).join(', ') || '(none)'}`);
+      process.exit(1);
+    }
+  }
+
+  const store = getWorkerStore();
+  const task = store.addTask({
+    prompt,
+    title: opts.title || null,
+    cwd: opts.cwd || process.cwd(),
+    priority: opts.priority ?? 5,
+    modelProfile,
+  });
+
+  console.log(ANSI.green('  Task added:'));
+  console.log(`    id:       ${task.id}`);
+  console.log(`    title:    ${task.title}`);
+  console.log(`    priority: ${task.priority}`);
+  if (task.modelProfile) {
+    console.log(`    model:    ${task.modelProfile}`);
+  }
+  console.log(`    cwd:      ${task.cwd}`);
+}
+
+function cmdWorkerList(opts) {
+  const store = getWorkerStore();
+  let tasks = store.getActiveTasks();
+
+  if (opts.status) {
+    tasks = tasks.filter(t => t.status === opts.status);
+  }
+
+  if (tasks.length === 0) {
+    console.log(ANSI.yellow('  No tasks in queue.'));
+    return;
+  }
+
+  console.log(ANSI.bold('\n  Active task queue:\n'));
+  for (const t of tasks) {
+    const icon = t.status === 'pending' ? '\u23F3' : '\u{1F504}';
+    const statusStr = t.status === 'pending' ? ANSI.yellow(t.status) : ANSI.cyan(t.status);
+    console.log(`  ${icon} ${ANSI.bold(t.id)}  [${statusStr}]  pri=${t.priority}`);
+    console.log(`    ${ANSI.dim(t.title)}`);
+    if (t.modelProfile) {
+      console.log(`    model: ${t.modelProfile}`);
+    }
+  }
+  console.log();
+}
+
+function cmdWorkerImport(args) {
+  const filePath = args[0];
+  if (!filePath) {
+    console.error(ANSI.red('Usage: fleet worker import <file.json>'));
+    process.exit(1);
+  }
+
+  const resolved = path.resolve(filePath);
+  if (!fs.existsSync(resolved)) {
+    console.error(ANSI.red(`File not found: ${resolved}`));
+    process.exit(1);
+  }
+
+  let entries;
+  try {
+    entries = JSON.parse(fs.readFileSync(resolved, 'utf8'));
+  } catch (e) {
+    console.error(ANSI.red(`Invalid JSON: ${e.message}`));
+    process.exit(1);
+  }
+
+  if (!Array.isArray(entries)) {
+    console.error(ANSI.red('Import file must contain a JSON array of tasks.'));
+    process.exit(1);
+  }
+
+  const store = getWorkerStore();
+  const models = loadModels();
+  let imported = 0;
+  let skipped = 0;
+
+  for (const entry of entries) {
+    if (!entry.prompt || typeof entry.prompt !== 'string') {
+      console.log(ANSI.yellow(`  Skipping entry (missing/invalid prompt): ${JSON.stringify(entry).slice(0, 80)}`));
+      skipped++;
+      continue;
+    }
+    if (entry.modelProfile) {
+      if (!models.models.some(m => m.name === entry.modelProfile)) {
+        console.log(ANSI.yellow(`  Skipping "${entry.prompt.slice(0, 40)}..." (unknown model profile: ${entry.modelProfile})`));
+        skipped++;
+        continue;
+      }
+    }
+    store.addTask({
+      prompt: entry.prompt,
+      title: entry.title || null,
+      cwd: entry.cwd || process.cwd(),
+      priority: entry.priority ?? 5,
+      modelProfile: entry.modelProfile || null,
+    });
+    imported++;
+  }
+
+  console.log(ANSI.green(`  Imported: ${imported} task(s)`));
+  if (skipped > 0) {
+    console.log(ANSI.yellow(`  Skipped: ${skipped} task(s)`));
+  }
+}
+
+function cmdWorkerReport(args) {
+  const date = args[0] || new Date().toISOString().slice(0, 10);
+  const store = getWorkerStore();
+  const archive = store.getArchive(date);
+
+  if (!archive || !archive.tasks || archive.tasks.length === 0) {
+    console.log(ANSI.yellow(`  No tasks found for ${date}.`));
+    return;
+  }
+
+  console.log(ANSI.bold(`\n  Daily report for ${date}:\n`));
+  for (const t of archive.tasks) {
+    const statusStr = t.status === 'completed' ? ANSI.green(t.status) : ANSI.red(t.status);
+    const duration = t.result && t.result.durationMs ? `${(t.result.durationMs / 1000).toFixed(1)}s` : 'N/A';
+    const cost = t.result && t.result.totalCostUsd != null ? `$${t.result.totalCostUsd.toFixed(4)}` : 'N/A';
+    const summary = t.result && t.result.claudeResult ? truncStr(t.result.claudeResult, 60) : '';
+    console.log(`  ${statusStr}  ${ANSI.bold(t.id)}  ${duration}  ${cost}`);
+    console.log(`    ${ANSI.dim(t.title)}`);
+    if (summary) {
+      console.log(`    ${ANSI.dim('result:')} ${summary}`);
+    }
+  }
+
+  // Aggregate summary
+  const s = archive.summary || {};
+  console.log(ANSI.bold('\n  Summary:'));
+  console.log(`    total: ${s.total || 0}  completed: ${s.completed || 0}  failed: ${s.failed || 0}`);
+  if (s.totalDurationMs) {
+    console.log(`    total duration: ${(s.totalDurationMs / 1000).toFixed(1)}s`);
+  }
+  if (s.totalCostUsd) {
+    console.log(`    total cost: $${s.totalCostUsd.toFixed(4)}`);
+  }
+  console.log();
+}
+
+function cmdWorkerShow(args) {
+  const id = args[0];
+  if (!id) {
+    console.error(ANSI.red('Usage: fleet worker show <task-id>'));
+    process.exit(1);
+  }
+
+  const store = getWorkerStore();
+
+  // Search active queue first, then archives
+  let task = store.getById(id);
+  if (!task) {
+    task = store.getArchivedTask(id);
+  }
+
+  if (!task) {
+    console.error(ANSI.red(`Task not found: ${id}`));
+    process.exit(1);
+  }
+
+  console.log(ANSI.bold('\n  Task details:\n'));
+  console.log(`    id:          ${task.id}`);
+  console.log(`    title:       ${task.title}`);
+  console.log(`    status:      ${task.status}`);
+  console.log(`    priority:    ${task.priority}`);
+  console.log(`    cwd:         ${task.cwd}`);
+  if (task.modelProfile) {
+    console.log(`    model:       ${task.modelProfile}`);
+  }
+  console.log(`    created:     ${task.createdAt}`);
+  if (task.startedAt) {
+    console.log(`    started:     ${task.startedAt}`);
+  }
+  if (task.completedAt) {
+    console.log(`    completed:   ${task.completedAt}`);
+  }
+
+  console.log(`\n    ${ANSI.bold('Prompt:')}`);
+  console.log(`    ${task.prompt}`);
+
+  if (task.result) {
+    console.log(`\n    ${ANSI.bold('Result:')}`);
+    if (task.result.exitCode != null) {
+      console.log(`    exit code: ${task.result.exitCode}`);
+    }
+    if (task.result.durationMs != null) {
+      console.log(`    duration: ${(task.result.durationMs / 1000).toFixed(1)}s`);
+    }
+    if (task.result.totalCostUsd != null) {
+      console.log(`    cost: $${task.result.totalCostUsd.toFixed(4)}`);
+    }
+    if (task.result.claudeResult) {
+      console.log(`    output:`);
+      console.log(task.result.claudeResult);
+    }
+    if (task.result.stderr) {
+      console.log(`    stderr:`);
+      console.log(ANSI.red(task.result.stderr));
+    }
+  }
+  console.log();
+}
+
 // ─── Master commands ─────────────────────────────────────────────────────
 
 async function cmdStart() {
@@ -687,6 +979,18 @@ function parseArgs(argv) {
       opts.model = argv[++i];
     } else if (arg === '--cwd' && argv[i + 1]) {
       opts.cwd = argv[++i];
+    } else if (arg === '--priority' && argv[i + 1]) {
+      opts.priority = parseInt(argv[++i], 10);
+    } else if (arg === '--concurrency' && argv[i + 1]) {
+      opts.concurrency = parseInt(argv[++i], 10);
+    } else if (arg === '--poll-interval' && argv[i + 1]) {
+      opts.pollInterval = parseInt(argv[++i], 10);
+    } else if (arg === '--timeout' && argv[i + 1]) {
+      opts.timeout = parseInt(argv[++i], 10);
+    } else if (arg === '--status' && argv[i + 1]) {
+      opts.status = argv[++i];
+    } else if (arg === '--title' && argv[i + 1]) {
+      opts.title = argv[++i];
     } else if (arg === '--help' || arg === '-h') {
       opts.help = true;
     } else {
@@ -719,6 +1023,15 @@ ${ANSI.bold('Commands:')}
   ls                  List running instances
   status              Show instance configuration details
   init                Create a fleet.config.json from template
+
+${ANSI.bold('Worker Commands:')}
+  worker start        Start auto-worker daemon
+  worker stop         Stop auto-worker daemon
+  worker add <prompt> Add a task to the queue
+  worker list         View active task queue
+  worker import <file>Import tasks from JSON file
+  worker report [date]View daily completion report
+  worker show <id>    Show full task details
 
 ${ANSI.bold('Options:')}
   --config <path>   Use specific config file
@@ -811,6 +1124,25 @@ function main() {
     return;
   }
 
+  // Worker commands (don't need fleet config)
+  if (command === 'worker') {
+    const workerCmd = subcommand;
+    switch (workerCmd) {
+      case 'start': cmdWorkerStart(opts); break;
+      case 'stop': cmdWorkerStop(); break;
+      case 'add': cmdWorkerAdd(args, opts); break;
+      case 'list': case 'ls': cmdWorkerList(opts); break;
+      case 'import': cmdWorkerImport(args); break;
+      case 'report': cmdWorkerReport(args); break;
+      case 'show': cmdWorkerShow(args); break;
+      default:
+        console.error(ANSI.red(`Unknown worker command: ${workerCmd || '(none)'}`));
+        console.error('Available: start, stop, add, list, import, report, show');
+        process.exit(1);
+    }
+    return;
+  }
+
   // Remaining commands need fleet config
   const config = loadConfig(opts.config);
 
@@ -849,6 +1181,8 @@ module.exports = {
   getModelsPath, loadModels, saveModels,
   cmdModelList, cmdInit, cmdHooksStatus, cmdLs, cmdStatus, cmdDown,
   cmdHooksInstall, cmdHooksRemove,
+  cmdWorkerStart, cmdWorkerStop, cmdWorkerAdd, cmdWorkerList,
+  cmdWorkerImport, cmdWorkerReport, cmdWorkerShow,
   filterInstances,
   parseArgs, main, ANSI, CONFIG_FILENAME, GLOBAL_CONFIG_DIR, STATE_FILE,
 };
