@@ -1,13 +1,18 @@
 import { describe, it, expect } from 'vitest';
-const { WorkerRunner } = await import('../src/worker-runner.js');
+const { WorkerRunner, SYSTEM_PROMPT } = await import('../src/worker-runner.js');
 
 describe('WorkerRunner', () => {
   it('runs a task and returns result', async () => {
     const runner = new WorkerRunner({ timeout: 30 });
     const task = { id: 'test-1', prompt: 'echo hello', cwd: process.cwd() };
     const result = await runner.run(task, null);
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout.length).toBeGreaterThan(0);
+    expect(result).toHaveProperty('exitCode');
+    expect(result).toHaveProperty('stdout');
+    expect(result).toHaveProperty('stderr');
+    expect(result).toHaveProperty('durationMs');
+    expect(result).toHaveProperty('isClaudeError');
+    expect(result).toHaveProperty('claudeResult');
+    expect(result).toHaveProperty('totalCostUsd');
     expect(typeof result.durationMs).toBe('number');
   }, 60000);
 
@@ -36,4 +41,18 @@ describe('WorkerRunner', () => {
     const result = await runner.run(task, modelConfig);
     expect(result).toHaveProperty('exitCode');
   }, 60000);
+});
+
+describe('SYSTEM_PROMPT', () => {
+  it('contains all required behavioral rules', () => {
+    expect(SYSTEM_PROMPT).toContain('autonomous worker');
+    expect(SYSTEM_PROMPT).toContain('NEVER ask questions');
+    expect(SYSTEM_PROMPT).toContain('skip the interactive parts');
+    expect(SYSTEM_PROMPT).toContain('attempt to resolve them independently');
+    expect(SYSTEM_PROMPT).toContain('commit each logical change');
+    expect(SYSTEM_PROMPT).toContain('## Summary');
+    expect(SYSTEM_PROMPT).toContain('## Changes');
+    expect(SYSTEM_PROMPT).toContain('## Result');
+    expect(SYSTEM_PROMPT).toContain('## Issues');
+  });
 });

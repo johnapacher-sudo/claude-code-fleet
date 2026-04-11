@@ -1,6 +1,27 @@
 const { spawn } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 
 const MAX_STDOUT = 1_000_000; // ~1MB in character count
+const USER_SETTINGS_PATH = path.join(os.homedir(), '.claude', 'settings.json');
+
+const SYSTEM_PROMPT = `You are a background autonomous worker. No human will read your output until the task completes.
+
+Execution rules:
+1. NEVER ask questions or wait for input. Proceed autonomously with best judgment.
+2. When a skill or workflow requires interaction, skip the interactive parts and make autonomous decisions.
+3. When encountering errors, attempt to resolve them independently. Try alternative approaches, search for solutions, and debug systematically. Only give up after exhausting reasonable options.
+4. When you modify project files (code, tests, docs), commit each logical change with a descriptive message using git.
+5. Produce a structured summary at the end of your work:
+   ## Summary
+   - What was done
+   ## Changes
+   - Files modified and why
+   ## Result
+   - Final status and any noteworthy findings
+   ## Issues (if any)
+   - Unresolved problems or assumptions made`;
 
 class WorkerRunner {
   /**
@@ -8,7 +29,7 @@ class WorkerRunner {
    * @param {number} [options.timeout=600] - Timeout in seconds
    */
   constructor(options = {}) {
-    const timeoutSec = options.timeout ?? 600;
+    const timeoutSec = options.timeout ?? 10800;
     this._timeoutMs = timeoutSec * 1000;
   }
 
@@ -24,26 +45,31 @@ class WorkerRunner {
    */
   run(task, modelConfig) {
     return new Promise((resolve) => {
-      const args = ['-p', task.prompt, '--output-format', 'json'];
+      const args = ['-p', task.prompt, '--dangerously-skip-permissions'];
 
-      if (modelConfig && modelConfig.model) {
-        args.push('--model', modelConfig.model);
-      }
-
-      const env = { ...process.env };
+      // Build settings override — merge with user's existing settings to preserve
+      // skills, hooks, and other configuration
+      const settingsEnv = {};
       if (modelConfig) {
+        if (modelConfig.model) {
+          args.push('--model', modelConfig.model);
+        }
         if (modelConfig.apiKey) {
-          env.ANTHROPIC_AUTH_TOKEN = modelConfig.apiKey;
-          env.ANTHROPIC_API_KEY = '';
+          settingsEnv.ANTHROPIC_AUTH_TOKEN = modelConfig.apiKey;
+          settingsEnv.ANTHROPIC_API_KEY = '';
         }
         if (modelConfig.apiBaseUrl) {
-          env.ANTHROPIC_BASE_URL = modelConfig.apiBaseUrl;
+          settingsEnv.ANTHROPIC_BASE_URL = modelConfig.apiBaseUrl;
         }
+      }
+      if (Object.keys(settingsEnv).length > 0) {
+        const mergedSettings = _buildMergedSettings(settingsEnv);
+        args.push('--settings', JSON.stringify(mergedSettings));
       }
 
       const child = spawn('claude', args, {
         cwd: task.cwd,
-        env,
+        env: { ...process.env },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 
@@ -126,8 +152,9 @@ class WorkerRunner {
 }
 
 /**
- * Parse stdout from claude CLI. If valid JSON, extract structured fields.
- * Otherwise, use raw stdout as claudeResult.
+ * Parse stdout from claude CLI.
+ * Without --output-format json, claude outputs plain text.
+ * If stdout happens to be valid JSON (e.g. older versions), extract structured fields.
  */
 function _parseClaudeOutput(stdout, truncated) {
   if (truncated) {
@@ -138,6 +165,7 @@ function _parseClaudeOutput(stdout, truncated) {
     };
   }
 
+  // Try JSON parse — if claude emitted JSON, extract fields
   try {
     const parsed = JSON.parse(stdout);
     return {
@@ -146,7 +174,7 @@ function _parseClaudeOutput(stdout, truncated) {
       totalCostUsd: parsed.total_cost_usd ?? null,
     };
   } catch {
-    // Not valid JSON — use raw stdout as result
+    // Plain text output — use raw stdout as result
     return {
       isClaudeError: false,
       claudeResult: stdout || null,
@@ -155,4 +183,25 @@ function _parseClaudeOutput(stdout, truncated) {
   }
 }
 
-module.exports = { WorkerRunner };
+/**
+ * Read user's ~/.claude/settings.json and merge env overrides into it.
+ * This preserves skills, hooks, and other user configuration while
+ * applying the model-specific env vars (API key, base URL).
+ */
+function _buildMergedSettings(envOverrides) {
+  let settings = {};
+  try {
+    if (fs.existsSync(USER_SETTINGS_PATH)) {
+      settings = JSON.parse(fs.readFileSync(USER_SETTINGS_PATH, 'utf8'));
+    }
+  } catch {
+    // Corrupted or unreadable — start fresh
+  }
+
+  if (!settings.env) settings.env = {};
+  Object.assign(settings.env, envOverrides);
+
+  return settings;
+}
+
+module.exports = { WorkerRunner, SYSTEM_PROMPT };
