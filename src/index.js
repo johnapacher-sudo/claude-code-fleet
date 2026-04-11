@@ -672,7 +672,7 @@ function getWorkerStore() {
   return new WorkerTaskStore(GLOBAL_CONFIG_DIR);
 }
 
-async function cmdWorkerStart(opts) {
+function cmdWorkerStart(opts) {
   const workerPidPath = path.join(GLOBAL_CONFIG_DIR, 'worker.pid');
 
   // Check if already running
@@ -688,48 +688,51 @@ async function cmdWorkerStart(opts) {
     }
   }
 
+  // Spawn detached daemon process
+  const daemonArgs = [
+    process.argv[1],
+    'worker', '_daemon',
+    '--concurrency', String(opts.concurrency || 1),
+    '--poll-interval', String(opts.pollInterval || 5),
+    '--timeout', String(opts.timeout || 600),
+  ];
+
+  const child = spawn(process.argv[0], daemonArgs, {
+    cwd: process.cwd(),
+    stdio: 'ignore',
+    detached: true,
+    env: { ...process.env },
+  });
+  child.unref();
+
+  // Write PID file
+  const dir = path.dirname(workerPidPath);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(workerPidPath, String(child.pid));
+
+  console.log(ANSI.green(`\n  Worker started (pid ${child.pid}, concurrency=${opts.concurrency || 1}, poll=${opts.pollInterval || 5}s)`));
+  console.log(ANSI.dim('  fleet worker add <prompt>  # Add tasks'));
+  console.log(ANSI.dim('  fleet worker list           # View queue'));
+  console.log(ANSI.dim('  fleet worker stop           # Stop worker'));
+  console.log(ANSI.dim('  fleet start                 # View dashboard'));
+}
+
+function cmdWorkerDaemon(opts) {
   const { WorkerManager } = require('./worker-manager');
   const { WorkerTaskStore } = require('./worker-task-store');
-  const { Master } = require('./master');
   const store = new WorkerTaskStore(GLOBAL_CONFIG_DIR);
-
-  // Start Master for TUI dashboard
-  const master = new Master();
 
   const manager = new WorkerManager(store, {
     concurrency: opts.concurrency || 1,
     pollInterval: opts.pollInterval || 5,
     timeout: opts.timeout || 600,
-    onTaskEvent: (type, data) => {
-      // Forward to master for TUI
-      master.handleWorkerEvent(type, data);
-      // Also log to console
-      if (type === 'taskStarted') {
-        console.log(ANSI.green(`  ▶ Started: ${data.task.title}`));
-      } else if (type === 'taskCompleted') {
-        const cost = data.result.totalCostUsd ? ` ($${data.result.totalCostUsd.toFixed(3)})` : '';
-        console.log(ANSI.green(`  ✓ Completed: ${data.task.title}${cost}`));
-      } else if (type === 'taskFailed') {
-        console.log(ANSI.red(`  ✗ Failed: ${data.task.title}`));
-      }
-    },
+    onTaskEvent: () => {}, // Daemon runs headless — TUI reads queue file instead
   });
 
-  master.workerManager = manager;
   manager.start();
 
-  try {
-    await master.start();
-  } catch (err) {
-    // TUI init failed — run in quiet mode
-    process.stderr.write(`[fleet] TUI init error: ${err.message}\n`);
-    process.stderr.write(`[fleet] Running in quiet mode.\n`);
-  }
-
-  console.log(ANSI.green(`\n  Worker started (concurrency=${opts.concurrency || 1}, poll=${opts.pollInterval || 5}s)`));
-
-  process.on('SIGINT', () => { manager.stop(); master.stop(); });
-  process.on('SIGTERM', () => { manager.stop(); master.stop(); });
+  process.on('SIGINT', () => { manager.stop(); process.exit(0); });
+  process.on('SIGTERM', () => { manager.stop(); process.exit(0); });
 }
 
 function cmdWorkerStop() {
@@ -1144,7 +1147,8 @@ function main() {
   if (command === 'worker') {
     const workerCmd = subcommand;
     switch (workerCmd) {
-      case 'start': cmdWorkerStart(opts).catch(err => { console.error(ANSI.red(`Fatal: ${err.message}`)); process.exit(1); }); break;
+      case 'start': cmdWorkerStart(opts); break;
+      case '_daemon': cmdWorkerDaemon(opts); break;
       case 'stop': cmdWorkerStop(); break;
       case 'add': cmdWorkerAdd(args, opts); break;
       case 'list': case 'ls': cmdWorkerList(opts); break;
@@ -1197,7 +1201,7 @@ module.exports = {
   getModelsPath, loadModels, saveModels,
   cmdModelList, cmdInit, cmdHooksStatus, cmdLs, cmdStatus, cmdDown,
   cmdHooksInstall, cmdHooksRemove,
-  cmdWorkerStart, cmdWorkerStop, cmdWorkerAdd, cmdWorkerList,
+  cmdWorkerStart, cmdWorkerDaemon, cmdWorkerStop, cmdWorkerAdd, cmdWorkerList,
   cmdWorkerImport, cmdWorkerReport, cmdWorkerShow,
   filterInstances,
   parseArgs, main, ANSI, CONFIG_FILENAME, GLOBAL_CONFIG_DIR, STATE_FILE,

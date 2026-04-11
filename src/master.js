@@ -15,6 +15,8 @@ const HOOK_CLIENT_DST = path.join(HOOKS_DIR, 'hook-client.js');
 const SETTINGS_PATH = path.join(os.homedir(), '.claude', 'settings.json');
 const CLEANUP_INTERVAL = 5 * 60 * 1000;
 const EXPIRE_THRESHOLD = 3 * 60 * 60 * 1000;
+const WORKER_QUEUE_PATH = path.join(GLOBAL_CONFIG_DIR, 'worker-queue.json');
+const WORKER_POLL_INTERVAL = 5 * 1000;
 
 class Master {
   constructor() {
@@ -23,6 +25,7 @@ class Master {
     this.socketServer = null;
     this.tui = null;
     this.cleanupTimer = null;
+    this.workerPollTimer = null;
   }
 
   async start() {
@@ -37,12 +40,15 @@ class Master {
     this.socketServer = new SocketServer(SOCK_PATH, (payload) => this.handleEvent(payload));
     this.socketServer.start();
     this.cleanupTimer = setInterval(() => this.cleanupExpired(), CLEANUP_INTERVAL);
+    this.pollWorkerQueue();
+    this.workerPollTimer = setInterval(() => this.pollWorkerQueue(), WORKER_POLL_INTERVAL);
     process.on('SIGINT', () => this.stop());
     process.on('SIGTERM', () => this.stop());
   }
 
   stop() {
     clearInterval(this.cleanupTimer);
+    if (this.workerPollTimer) clearInterval(this.workerPollTimer);
     if (this.socketServer) this.socketServer.stop();
     if (this.tui) this.tui.stop();
     process.exit(0);
@@ -248,43 +254,56 @@ class Master {
     try { fs.unlinkSync(filePath); } catch { /* ignore */ }
   }
 
-  handleWorkerEvent(type, data) {
-    if (type === 'taskStarted' || type === 'taskCompleted' || type === 'taskFailed') {
-      const task = data.task;
-      const sid = 'auto-' + task.id;
+  pollWorkerQueue() {
+    if (!fs.existsSync(WORKER_QUEUE_PATH)) return;
+    let tasks;
+    try {
+      tasks = JSON.parse(fs.readFileSync(WORKER_QUEUE_PATH, 'utf-8')).tasks || [];
+    } catch { return; }
 
-      if (type === 'taskCompleted' || type === 'taskFailed') {
-        // Remove from workers map (task is archived)
+    // Remove stale auto-worker entries
+    const activeIds = new Set(tasks.map(t => 'auto-' + t.id));
+    for (const [sid, w] of this.workers) {
+      if (w.type === 'auto' && !activeIds.has(sid)) {
         this.workers.delete(sid);
-      } else {
-        // taskStarted — add/update virtual worker
-        this.workers.set(sid, {
-          type: 'auto',
-          sessionId: sid,
-          sessionIdShort: task.id.slice(-4),
-          displayName: task.title,
-          cwd: task.cwd,
-          modelName: task.modelProfile || 'default',
-          fleetModelName: task.modelProfile || 'default',
-          firstEventAt: new Date(task.startedAt || task.createdAt).getTime(),
-          lastEventAt: Date.now(),
-          status: 'active',
-          awaitsInput: false,
-          turns: [],
-          currentTurn: { summary: '', summaryTime: Date.now(), actions: [{ tool: 'Worker', target: task.title, time: Date.now(), status: 'running' }] },
-          lastActions: [],
-          lastMessage: null,
-          termProgram: null,
-          itermSessionId: null,
-          pid: null,
-          ppid: null,
-          _queuePosition: null,
-          _queueTotal: null,
-        });
       }
-
-      if (this.tui) this.tui.scheduleRender();
     }
+
+    // Add/update auto-worker entries from queue file
+    const total = tasks.length;
+    const pending = tasks.filter(t => t.status === 'pending').length;
+    let position = 0;
+    for (const task of tasks) {
+      const sid = 'auto-' + task.id;
+      if (task.status === 'pending') position++;
+      this.workers.set(sid, {
+        type: 'auto',
+        sessionId: sid,
+        sessionIdShort: task.id.slice(-4),
+        displayName: task.title,
+        cwd: task.cwd || '',
+        modelName: task.modelProfile || 'default',
+        fleetModelName: task.modelProfile || 'default',
+        firstEventAt: new Date(task.startedAt || task.createdAt).getTime(),
+        lastEventAt: Date.now(),
+        status: task.status === 'running' ? 'active' : 'idle',
+        awaitsInput: false,
+        turns: [],
+        currentTurn: task.status === 'running'
+          ? { summary: '', summaryTime: Date.now(), actions: [{ tool: 'Worker', target: task.title, time: Date.now(), status: 'running' }] }
+          : null,
+        lastActions: [],
+        lastMessage: null,
+        termProgram: null,
+        itermSessionId: null,
+        pid: null,
+        ppid: null,
+        _queuePosition: task.status === 'pending' ? position : null,
+        _queueTotal: total,
+      });
+    }
+
+    if (this.tui) this.tui.scheduleRender();
   }
 
   getWorkerQueueStatus() {
