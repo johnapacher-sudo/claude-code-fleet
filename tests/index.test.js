@@ -103,6 +103,25 @@ describe('parseArgs', () => {
   it('--model', () => expect(parseArgs(['--model', 'o']).opts.model).toBe('o'));
   it('--cwd', () => expect(parseArgs(['--cwd', '/t']).opts.cwd).toBe('/t'));
   it('extra args', () => expect(parseArgs(['a', 'b', 'c']).args).toEqual(['c']));
+  it('--priority', () => expect(parseArgs(['--priority', '3']).opts.priority).toBe(3));
+  it('--concurrency', () => expect(parseArgs(['--concurrency', '4']).opts.concurrency).toBe(4));
+  it('--poll-interval', () => expect(parseArgs(['--poll-interval', '10']).opts.pollInterval).toBe(10));
+  it('--timeout', () => expect(parseArgs(['--timeout', '300']).opts.timeout).toBe(300));
+  it('--status', () => expect(parseArgs(['--status', 'running']).opts.status).toBe('running'));
+  it('--title', () => expect(parseArgs(['--title', 'My Task']).opts.title).toBe('My Task'));
+  it('worker start subcommand', () => {
+    const r = parseArgs(['worker', 'start', '--concurrency', '2']);
+    expect(r.command).toBe('worker');
+    expect(r.subcommand).toBe('start');
+    expect(r.opts.concurrency).toBe(2);
+  });
+  it('worker add subcommand', () => {
+    const r = parseArgs(['worker', 'add', 'fix the bug', '--title', 'Bugfix']);
+    expect(r.command).toBe('worker');
+    expect(r.subcommand).toBe('add');
+    expect(r.args).toEqual(['fix the bug']);
+    expect(r.opts.title).toBe('Bugfix');
+  });
 });
 
 describe('filterInstances', () => {
