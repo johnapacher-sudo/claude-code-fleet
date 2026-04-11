@@ -672,48 +672,64 @@ function getWorkerStore() {
   return new WorkerTaskStore(GLOBAL_CONFIG_DIR);
 }
 
-function cmdWorkerStart(opts) {
-  const pidPath = path.join(GLOBAL_CONFIG_DIR, 'worker.pid');
-  if (fs.existsSync(pidPath)) {
-    const pid = parseInt(fs.readFileSync(pidPath, 'utf8'), 10);
-    if (isProcessAlive(pid)) {
+async function cmdWorkerStart(opts) {
+  const workerPidPath = path.join(GLOBAL_CONFIG_DIR, 'worker.pid');
+
+  // Check if already running
+  if (fs.existsSync(workerPidPath)) {
+    const pid = parseInt(fs.readFileSync(workerPidPath, 'utf-8'));
+    try {
+      process.kill(pid, 0);
       console.error(ANSI.red(`Worker already running (pid ${pid})`));
+      console.error(`Run ${ANSI.bold('fleet worker stop')} first.`);
       process.exit(1);
+    } catch {
+      fs.unlinkSync(workerPidPath);
     }
-    // Stale PID file — clean up
-    try { fs.unlinkSync(pidPath); } catch { /* ignore */ }
   }
 
-  const store = getWorkerStore();
   const { WorkerManager } = require('./worker-manager');
+  const { WorkerTaskStore } = require('./worker-task-store');
+  const { Master } = require('./master');
+  const store = new WorkerTaskStore(GLOBAL_CONFIG_DIR);
+
+  // Start Master for TUI dashboard
+  const master = new Master();
+
   const manager = new WorkerManager(store, {
-    concurrency: opts.concurrency ?? 1,
-    pollInterval: opts.pollInterval ?? 5,
-    timeout: opts.timeout ?? 600,
-    onTaskEvent(type, data) {
+    concurrency: opts.concurrency || 1,
+    pollInterval: opts.pollInterval || 5,
+    timeout: opts.timeout || 600,
+    onTaskEvent: (type, data) => {
+      // Forward to master for TUI
+      master.handleWorkerEvent(type, data);
+      // Also log to console
       if (type === 'taskStarted') {
-        console.log(ANSI.cyan(`  [worker] started task ${data.taskId} (slot ${data.slotIdx})`));
+        console.log(ANSI.green(`  ▶ Started: ${data.task.title}`));
       } else if (type === 'taskCompleted') {
-        console.log(ANSI.green(`  [worker] completed task ${data.taskId} (slot ${data.slotIdx})`));
+        const cost = data.result.totalCostUsd ? ` ($${data.result.totalCostUsd.toFixed(3)})` : '';
+        console.log(ANSI.green(`  ✓ Completed: ${data.task.title}${cost}`));
       } else if (type === 'taskFailed') {
-        console.log(ANSI.red(`  [worker] failed task ${data.taskId} (slot ${data.slotIdx})`));
+        console.log(ANSI.red(`  ✗ Failed: ${data.task.title}`));
       }
     },
   });
 
+  master.workerManager = manager;
   manager.start();
 
-  const shutdown = () => {
-    console.log(ANSI.yellow('\n  Shutting down worker...'));
-    manager.stop();
-    process.exit(0);
-  };
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  try {
+    await master.start();
+  } catch (err) {
+    // TUI init failed — run in quiet mode
+    process.stderr.write(`[fleet] TUI init error: ${err.message}\n`);
+    process.stderr.write(`[fleet] Running in quiet mode.\n`);
+  }
 
-  console.log(ANSI.green('  Worker started'));
-  console.log(ANSI.dim(`  concurrency=${opts.concurrency ?? 1} pollInterval=${opts.pollInterval ?? 5}s timeout=${opts.timeout ?? 600}s`));
-  console.log(ANSI.dim('  Press Ctrl+C to stop'));
+  console.log(ANSI.green(`\n  Worker started (concurrency=${opts.concurrency || 1}, poll=${opts.pollInterval || 5}s)`));
+
+  process.on('SIGINT', () => { manager.stop(); master.stop(); });
+  process.on('SIGTERM', () => { manager.stop(); master.stop(); });
 }
 
 function cmdWorkerStop() {
@@ -1128,7 +1144,7 @@ function main() {
   if (command === 'worker') {
     const workerCmd = subcommand;
     switch (workerCmd) {
-      case 'start': cmdWorkerStart(opts); break;
+      case 'start': cmdWorkerStart(opts).catch(err => { console.error(ANSI.red(`Fatal: ${err.message}`)); process.exit(1); }); break;
       case 'stop': cmdWorkerStop(); break;
       case 'add': cmdWorkerAdd(args, opts); break;
       case 'list': case 'ls': cmdWorkerList(opts); break;
