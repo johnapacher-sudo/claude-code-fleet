@@ -1,6 +1,6 @@
 const { spawn } = require('child_process');
 
-const MAX_STDOUT_BYTES = 1024 * 1024; // 1MB
+const MAX_STDOUT = 1_000_000; // ~1MB in character count
 
 class WorkerRunner {
   /**
@@ -52,14 +52,15 @@ class WorkerRunner {
       let truncated = false;
 
       child.stdout.on('data', (chunk) => {
-        if (!truncated && stdout.length + chunk.length <= MAX_STDOUT_BYTES) {
-          stdout += chunk;
-        } else if (!truncated) {
-          stdout += chunk.slice(0, MAX_STDOUT_BYTES - stdout.length);
+        const str = chunk.toString();
+        if (stdout.length + str.length > MAX_STDOUT) {
+          stdout += str.slice(0, MAX_STDOUT - stdout.length);
           stdout += '\n[output truncated at 1MB]';
           truncated = true;
+          child.kill('SIGKILL');
+          return;
         }
-        // After truncation, silently discard further stdout data
+        stdout += str;
       });
 
       child.stderr.on('data', (chunk) => {
