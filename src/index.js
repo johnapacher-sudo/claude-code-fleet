@@ -736,6 +736,8 @@ function parseArgs(argv) {
       } else {
         opts.proxy = true;
       }
+    } else if (arg === '--version' || arg === '-v' || arg === '-V') {
+      opts.version = true;
     } else if (arg === '--help' || arg === '-h') {
       opts.help = true;
     } else {
@@ -775,6 +777,7 @@ ${ANSI.bold('Options:')}
   --model <name>    Model profile name (for run command)
   --cwd <path>      Working directory (for run command)
   --proxy [url]     Enable HTTP proxy (uses profile proxy if url omitted)
+  -v, --version     Show version number
   -h, --help        Show this help
 
 ${ANSI.bold('Examples:')}
@@ -790,6 +793,12 @@ ${ANSI.bold('Examples:')}
 
 function main() {
   const { command, subcommand, args, opts } = parseArgs(process.argv.slice(2));
+
+  if (opts.version || command === 'version') {
+    const pkg = require(path.join(__dirname, '..', 'package.json'));
+    console.log(pkg.version);
+    process.exit(0);
+  }
 
   if (opts.help || command === 'help') {
     printHelp();
