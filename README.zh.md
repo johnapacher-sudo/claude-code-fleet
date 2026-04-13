@@ -13,8 +13,9 @@
 - **观察者面板** — 实时 TUI 自动发现所有 Claude Code 进程，展示状态、操作和 AI 消息
 - **终端聚焦** — 一键跳转到任意工作进程所在的终端窗口/标签页（支持 iTerm、Terminal.app、VSCode、Cursor、Warp、WezTerm）
 - **会话持久化** — 工作进程在 master 重启后依然存在；会话状态持久化到磁盘并自动恢复
-- **模型配置** — 命名配置文件，可快速启动使用不同模型和 API Key 的交互式会话
+- **模型配置** — 命名配置文件，可快速启动使用不同模型、API Key 和代理设置的交互式会话
 - **Fleet 模式** — 在配置文件中定义多个实例，作为后台进程进行管理
+- **HTTP 代理** — 支持按配置或按运行设置代理；自动设置 `HTTP_PROXY` 和 `HTTPS_PROXY` 环境变量
 - **交互式界面** — 方向键选择器、确认对话框、多字段输入表单，全部在终端中运行
 
 ## 前置要求
@@ -37,6 +38,11 @@ fleet model add
 
 # 运行单个实例（交互式选择器）
 fleet run
+
+# 启用代理运行
+fleet run --proxy
+fleet run --proxy http://127.0.0.1:7890
+fleet run --proxy=http://127.0.0.1:7890
 
 # 启动观察者面板
 fleet start
@@ -71,8 +77,10 @@ fleet down
 管理命名的模型配置，并启动单个交互式 Claude Code 会话。
 
 - 配置文件存储在 `~/.config/claude-code-fleet/models.json`
-- `fleet run` 启动前台交互式会话，继承 `stdio`
+- 每个配置包含：名称、模型 ID、API Key、API Base URL 和可选的代理 URL
+- `fleet run`（或不带命令直接执行 `fleet`）启动前台交互式会话，继承 `stdio`
 - 如果未指定 `--model` 参数，将显示交互式箭头键选择菜单
+- 使用 `--proxy` 通过命令行启用代理，或使用配置中保存的代理地址
 
 ### Fleet 模式（后台）
 

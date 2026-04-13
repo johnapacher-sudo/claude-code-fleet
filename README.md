@@ -13,8 +13,9 @@ Run multiple Claude Code instances with different API keys, models, and endpoint
 - **Observer Dashboard** — Real-time TUI that auto-discovers all Claude Code processes and shows their status, actions, and AI messages
 - **Terminal Focus** — Jump to any worker's terminal window/tab with one keypress (iTerm, Terminal.app, VSCode, Cursor, Warp, WezTerm)
 - **Session Persistence** — Workers survive master restarts; session state is persisted to disk and auto-resumed
-- **Model Profiles** — Named profiles for quick interactive sessions with different models and API keys
+- **Model Profiles** — Named profiles for quick interactive sessions with different models, API keys, and proxy settings
 - **Fleet Mode** — Define multiple instances in a config file and manage them as background processes
+- **HTTP Proxy** — Per-profile or per-run proxy support; auto-sets `HTTP_PROXY` and `HTTPS_PROXY` environment variables
 - **Interactive UI** — Arrow-key selectors, confirmation dialogs, and multi-field input forms, all in the terminal
 
 ## Prerequisites
@@ -37,6 +38,11 @@ fleet model add
 
 # Run a single instance (interactive picker)
 fleet run
+
+# Run with proxy enabled
+fleet run --proxy
+fleet run --proxy http://127.0.0.1:7890
+fleet run --proxy=http://127.0.0.1:7890
 
 # Start the observer dashboard
 fleet start
@@ -71,8 +77,10 @@ Start a real-time terminal dashboard that observes all active Claude Code proces
 Manage named model profiles and launch single interactive Claude Code sessions.
 
 - Profiles are stored globally at `~/.config/claude-code-fleet/models.json`
-- `fleet run` launches a foreground interactive session with `stdio` inherited
+- Each profile stores: name, model ID, API key, API base URL, and optional proxy URL
+- `fleet run` (or just `fleet` with no command) launches a foreground interactive session with `stdio` inherited
 - If no `--model` flag is given, an interactive arrow-key menu appears
+- Use `--proxy` to enable proxy via CLI, or rely on the profile's saved proxy URL
 
 ### Fleet Mode (Background)
 
