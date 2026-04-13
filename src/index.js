@@ -35,7 +35,8 @@ function truncStr(s, max) {
 function modelMeta(m) {
   const key = m.apiKey ? truncStr(m.apiKey, 12) + '...' : 'not set';
   const endpoint = truncStr(m.apiBaseUrl || 'default', 32);
-  return `key: ${key} \u00B7 endpoint: ${endpoint}`;
+  const proxy = m.proxy ? ` \u00B7 proxy: ${truncStr(m.proxy, 32)}` : '';
+  return `key: ${key} \u00B7 endpoint: ${endpoint}${proxy}`;
 }
 
 function modelWarning(m) {
@@ -63,6 +64,26 @@ function modelItem(m) {
 function run(cmd, args) {
   const r = spawnSync(cmd, args, { encoding: 'utf-8', stdio: 'pipe' });
   return r.status === 0;
+}
+
+function normalizeProxyUrl(url) {
+  if (!url) return url;
+  if (!/^https?:\/\//i.test(url)) return `http://${url}`;
+  return url;
+}
+
+function resolveProxy(cliProxy, profileProxy) {
+  if (!cliProxy) return null;
+  if (typeof cliProxy === 'string') return normalizeProxyUrl(cliProxy);
+  if (cliProxy === true && profileProxy) return normalizeProxyUrl(profileProxy);
+  return null;
+}
+
+function applyProxy(env, proxyUrl) {
+  if (proxyUrl) {
+    env.HTTP_PROXY = proxyUrl;
+    env.HTTPS_PROXY = proxyUrl;
+  }
 }
 
 // ─── Dependency checks ───────────────────────────────────────────────────────
@@ -253,6 +274,7 @@ async function cmdModelAdd() {
         { label: 'Model ID', value: '', placeholder: 'e.g. claude-opus-4-6' },
         { label: 'API Key', value: '', placeholder: 'sk-ant-...' },
         { label: 'API Base URL', value: '', placeholder: 'https://api.anthropic.com' },
+        { label: 'Proxy URL', value: '', placeholder: 'http://127.0.0.1:7890 (optional)' },
       ],
       requiredFields: allRequired,
     });
@@ -262,12 +284,13 @@ async function cmdModelAdd() {
     // Show confirmation
     const key = truncStr(created['API Key'], 12) + '...';
     const endpoint = truncStr(created['API Base URL'], 32);
+    const proxyDisplay = created['Proxy URL'] ? ` \u00B7 proxy: ${truncStr(created['Proxy URL'], 32)}` : '';
     const confirmed = await inputMod.renderConfirm({
       title: `Add model "${created.Name}"?`,
       items: {
         label: created.Name,
         detail: created['Model ID'],
-        meta: `key: ${key} \u00B7 endpoint: ${endpoint}`,
+        meta: `key: ${key} \u00B7 endpoint: ${endpoint}${proxyDisplay}`,
         value: created.Name,
       },
     });
@@ -285,6 +308,7 @@ async function cmdModelAdd() {
       model: created['Model ID'] || undefined,
       apiKey: created['API Key'] || undefined,
       apiBaseUrl: created['API Base URL'] || undefined,
+      proxy: created['Proxy URL'] || undefined,
     });
     saveModels(data);
     console.log(ANSI.green(`\n  Model "${created.Name}" added.`));
@@ -304,7 +328,8 @@ function cmdModelList() {
     const key = m.apiKey ? m.apiKey.slice(0, 12) + '...' : '\x1b[38;2;248;81;81mnot set\x1b[0m';
     const endpoint = m.apiBaseUrl || '\x1b[38;2;74;222;128mdefault\x1b[0m';
     console.log(`  \x1b[38;2;167;139;250m\u2502\x1b[0m \x1b[38;2;224;224;224m\x1b[1m${m.name}\x1b[0m  \x1b[38;2;82;82;82m${m.model || 'default'}\x1b[0m`);
-    console.log(`    \x1b[38;2;139;155;168mkey:\x1b[0m ${key}  \x1b[38;2;139;155;168mendpoint:\x1b[0m ${endpoint}`);
+    const proxyInfo = m.proxy ? `  \x1b[38;2;139;155;168mproxy:\x1b[0m ${m.proxy}` : '';
+    console.log(`    \x1b[38;2;139;155;168mkey:\x1b[0m ${key}  \x1b[38;2;139;155;168mendpoint:\x1b[0m ${endpoint}${proxyInfo}`);
   }
 }
 
@@ -334,6 +359,7 @@ async function cmdModelEdit() {
           { label: 'Model ID', value: entry.model || '', placeholder: 'e.g. claude-opus-4-6' },
           { label: 'API Key', value: entry.apiKey || '', placeholder: 'required' },
           { label: 'API Base URL', value: entry.apiBaseUrl || '', placeholder: 'https://api.anthropic.com (leave empty for default)' },
+          { label: 'Proxy URL', value: entry.proxy || '', placeholder: 'http://127.0.0.1:7890 (optional)' },
         ],
         requiredFields: ['Name', 'Model ID', 'API Key', 'API Base URL'],
       });
@@ -345,12 +371,15 @@ async function cmdModelEdit() {
         ? truncStr(updated['API Key'], 12) + '...'
         : (entry.apiKey ? '(unchanged)' : 'not set');
       const endpoint = truncStr(updated['API Base URL'] || entry.apiBaseUrl || 'default', 32);
+      const proxyDisplay = (updated['Proxy URL'] || entry.proxy)
+        ? ` \u00B7 proxy: ${truncStr(updated['Proxy URL'] || entry.proxy, 32)}`
+        : '';
       const confirmed = await inputMod.renderConfirm({
         title: `Save changes to "${updated.Name || entry.name || '(unnamed)'}"?`,
         items: {
           label: updated.Name || entry.name || '(unnamed)',
           detail: updated['Model ID'] || entry.model || 'default',
-          meta: `key: ${key} \u00B7 endpoint: ${endpoint}`,
+          meta: `key: ${key} \u00B7 endpoint: ${endpoint}${proxyDisplay}`,
           value: selected,
         },
       });
@@ -368,6 +397,7 @@ async function cmdModelEdit() {
       if (updated['Model ID'] !== undefined) entry.model = updated['Model ID'] || undefined;
       if (updated['API Key']) entry.apiKey = updated['API Key'];
       if (updated['API Base URL'] !== undefined) entry.apiBaseUrl = updated['API Base URL'] || undefined;
+      if (updated['Proxy URL'] !== undefined) entry.proxy = updated['Proxy URL'] || undefined;
 
       saveModels(data);
       console.log(ANSI.green(`\n  Model "${updated.Name || selected}" updated.`));
@@ -408,7 +438,7 @@ async function cmdModelDelete() {
 
 // ─── Run command ─────────────────────────────────────────────────────────────
 
-async function cmdRun(modelName, cwd) {
+async function cmdRun(modelName, cwd, proxyOpt) {
   checkDeps();
 
   const data = loadModels();
@@ -447,9 +477,14 @@ async function cmdRun(modelName, cwd) {
   const claudeArgs = ['--dangerously-skip-permissions'];
   if (entry.model) claudeArgs.push('--model', entry.model);
   claudeArgs.push('--settings', JSON.stringify({ env: settingsEnv }));
-  console.log(ANSI.dim(`\n  Launching claude with model: ${entry.model || 'default'} (${entry.name})\n`));
+
+  const proxyUrl = resolveProxy(proxyOpt, entry.proxy);
+  const proxyInfo = proxyUrl ? `  proxy: ${proxyUrl}` : '';
+  console.log(ANSI.dim(`\n  Launching claude with model: ${entry.model || 'default'} (${entry.name})${proxyInfo}\n`));
 
   const env = { ...process.env, FLEET_MODEL_NAME: entry.name };
+  applyProxy(env, proxyUrl);
+
   const child = spawn('claude', claudeArgs, {
     cwd: workDir,
     stdio: 'inherit',
@@ -522,6 +557,7 @@ function cmdUp(config, onlyNames) {
 
     const env = { ...process.env };
     if (inst.env) Object.assign(env, inst.env);
+    applyProxy(env, inst.proxy);
 
     const claudeSettingsEnv = {};
     if (inst.apiKey) {
@@ -552,7 +588,8 @@ function cmdUp(config, onlyNames) {
       startedAt: new Date().toISOString(),
     };
 
-    console.log(ANSI.green(`  [${inst.name}]`) + ` model=${ANSI.cyan(inst.model || 'default')} pid=${child.pid}`);
+    const proxyTag = inst.proxy ? ` proxy=${inst.proxy}` : '';
+    console.log(ANSI.green(`  [${inst.name}]`) + ` model=${ANSI.cyan(inst.model || 'default')} pid=${child.pid}${proxyTag}`);
   }
 
   saveState(state);
@@ -656,6 +693,9 @@ function cmdStatus(config) {
     console.log(`    model:    ${ANSI.cyan(inst.model || 'default')}`);
     console.log(`    endpoint: ${inst.apiBaseUrl || 'https://api.anthropic.com'}`);
     console.log(`    cwd:      ${cwd}`);
+    if (inst.proxy) {
+      console.log(`    proxy:    ${inst.proxy}`);
+    }
     if (inst.env && Object.keys(inst.env).length > 0) {
       console.log(`    env:      ${Object.keys(inst.env).join(', ')}`);
     }
@@ -687,6 +727,15 @@ function parseArgs(argv) {
       opts.model = argv[++i];
     } else if (arg === '--cwd' && argv[i + 1]) {
       opts.cwd = argv[++i];
+    } else if (arg === '--proxy' || arg.startsWith('--proxy=')) {
+      const eqVal = arg.startsWith('--proxy=') ? arg.slice('--proxy='.length) : null;
+      if (eqVal) {
+        opts.proxy = eqVal;
+      } else if (argv[i + 1] && !argv[i + 1].startsWith('--')) {
+        opts.proxy = argv[++i];
+      } else {
+        opts.proxy = true;
+      }
     } else if (arg === '--help' || arg === '-h') {
       opts.help = true;
     } else {
@@ -725,11 +774,14 @@ ${ANSI.bold('Options:')}
   --only <names>    Comma-separated instance names to target
   --model <name>    Model profile name (for run command)
   --cwd <path>      Working directory (for run command)
+  --proxy [url]     Enable HTTP proxy (uses profile proxy if url omitted)
   -h, --help        Show this help
 
 ${ANSI.bold('Examples:')}
   fleet start                       # Start observer dashboard
   fleet run --model opus-prod       # Start Claude Code with a model profile
+  fleet run --proxy                 # Enable proxy using profile's saved proxy URL
+  fleet run --proxy http://127.0.0.1:7890  # Enable proxy with explicit URL
   fleet hooks status                # Check hook installation status
   fleet model add                   # Add a model profile interactively
   fleet up                          # Start all instances (background)
@@ -777,7 +829,7 @@ function main() {
 
   // Run command (doesn't need fleet config)
   if (command === 'run') {
-    cmdRun(opts.model, opts.cwd);
+    cmdRun(opts.model, opts.cwd, opts.proxy);
     return;
   }
 
@@ -843,7 +895,7 @@ if (require.main === module) main();
 
 module.exports = {
   stripAnsi, truncStr, modelMeta, modelWarning, modelItem,
-  run, checkDeps,
+  run, checkDeps, normalizeProxyUrl, resolveProxy, applyProxy,
   loadState, saveState, isProcessAlive, cleanupState,
   configSearchPaths, findConfigFile, loadConfig, validateConfig,
   getModelsPath, loadModels, saveModels,

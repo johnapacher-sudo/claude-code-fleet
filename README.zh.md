@@ -110,6 +110,7 @@ fleet down
 | `--only <names>` | 仅操作指定的实例（逗号分隔，用于 `up`/`restart`） |
 | `--model <name>` | 指定模型配置（用于 `run` 命令） |
 | `--cwd <path>` | 设置工作目录（用于 `run` 命令） |
+| `--proxy [url]` | 启用 HTTP 代理；省略 url 时使用配置中保存的代理地址（用于 `run` 命令） |
 
 ## 配置
 
@@ -130,6 +131,7 @@ fleet down
 | `cwd` | 否 | 实例的工作目录（不存在时自动创建） |
 | `env` | 否 | 额外的环境变量，以键值对形式 |
 | `args` | 否 | 传递给 `claude` 的额外 CLI 参数 |
+| `proxy` | 否 | HTTP 代理 URL（设置 `HTTP_PROXY` 和 `HTTPS_PROXY`） |
 
 ### 示例配置
 
@@ -154,6 +156,7 @@ fleet down
       "apiKey": "your-key",
       "model": "claude-sonnet-4-6",
       "apiBaseUrl": "https://your-proxy.example.com/v1",
+      "proxy": "http://127.0.0.1:7890",
       "env": { "CUSTOM_HEADER": "value" },
       "args": ["--verbose"],
       "cwd": "./workspace/custom"

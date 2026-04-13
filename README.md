@@ -110,6 +110,7 @@ Define multiple instances in a config file and manage them as background process
 | `--only <names>` | Target only specific named instances (comma-separated, for `up`/`restart`) |
 | `--model <name>` | Specify model profile (for `run` command) |
 | `--cwd <path>` | Set working directory (for `run` command) |
+| `--proxy [url]` | Enable HTTP proxy; uses profile's saved proxy URL if url omitted (for `run` command) |
 
 ## Configuration
 
@@ -130,6 +131,7 @@ Define multiple instances in a config file and manage them as background process
 | `cwd` | No | Working directory for the instance (created if missing) |
 | `env` | No | Additional environment variables as key-value pairs |
 | `args` | No | Extra CLI arguments passed to `claude` |
+| `proxy` | No | HTTP proxy URL (sets `HTTP_PROXY` and `HTTPS_PROXY`) |
 
 ### Example Config
 
@@ -154,6 +156,7 @@ Define multiple instances in a config file and manage them as background process
       "apiKey": "your-key",
       "model": "claude-sonnet-4-6",
       "apiBaseUrl": "https://your-proxy.example.com/v1",
+      "proxy": "http://127.0.0.1:7890",
       "env": { "CUSTOM_HEADER": "value" },
       "args": ["--verbose"],
       "cwd": "./workspace/custom"
