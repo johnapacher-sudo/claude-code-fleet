@@ -12,6 +12,10 @@ const HOOKS_DIR = path.join(GLOBAL_CONFIG_DIR, 'hooks');
 const SESSIONS_DIR = path.join(GLOBAL_CONFIG_DIR, 'sessions');
 const HOOK_CLIENT_SRC = path.join(__dirname, 'hook-client.js');
 const HOOK_CLIENT_DST = path.join(HOOKS_DIR, 'hook-client.js');
+const NOTIFIER_SRC = path.join(__dirname, 'notifier.js');
+const NOTIFIER_DST = path.join(HOOKS_DIR, 'notifier.js');
+const FOCUS_SESSION_SRC = path.join(__dirname, 'focus-session.js');
+const FOCUS_SESSION_DST = path.join(HOOKS_DIR, 'focus-session.js');
 const SETTINGS_PATH = path.join(os.homedir(), '.claude', 'settings.json');
 const CLEANUP_INTERVAL = 5 * 60 * 1000;
 const EXPIRE_THRESHOLD = 3 * 60 * 60 * 1000;
@@ -27,6 +31,8 @@ class Master {
   async start() {
     if (!fs.existsSync(HOOKS_DIR)) fs.mkdirSync(HOOKS_DIR, { recursive: true });
     fs.copyFileSync(HOOK_CLIENT_SRC, HOOK_CLIENT_DST);
+    if (fs.existsSync(NOTIFIER_SRC)) fs.copyFileSync(NOTIFIER_SRC, NOTIFIER_DST);
+    if (fs.existsSync(FOCUS_SESSION_SRC)) fs.copyFileSync(FOCUS_SESSION_SRC, FOCUS_SESSION_DST);
     ensureHooks();
     this.loadPersistedSessions();
     // Start TUI first (async Ink init) so _renderCallback is ready before events arrive
