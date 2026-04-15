@@ -17,6 +17,7 @@
 - **Fleet 模式** — 在配置文件中定义多个实例，作为后台进程进行管理
 - **HTTP 代理** — 支持按配置或按运行设置代理；自动设置 `HTTP_PROXY` 和 `HTTPS_PROXY` 环境变量
 - **交互式界面** — 方向键选择器、确认对话框、多字段输入表单，全部在终端中运行
+- **桌面通知** — Claude Code 完成任务或发送通知时弹出系统通知，支持配置提示音
 
 ## 前置要求
 
@@ -46,6 +47,10 @@ fleet run --proxy=http://127.0.0.1:7890
 
 # 启动观察者面板
 fleet start
+
+# 配置桌面通知
+fleet notify --on
+fleet notify --no-sound
 
 # 或初始化 Fleet 配置以进行多实例管理
 fleet init
@@ -108,6 +113,7 @@ fleet down
 | `fleet restart` | — | 停止然后重新启动所有（或 `--only` 指定的）实例 |
 | `fleet ls` | `list` | 列出当前运行中的后台实例（含 PID 和模型信息） |
 | `fleet status` | — | 显示所有实例的详细配置信息 |
+| `fleet notify` | — | 配置桌面通知（`--on`、`--off`、`--sound`、`--no-sound`） |
 | `fleet init` | — | 在当前目录从模板创建 `fleet.config.json` |
 
 ### 全局选项
@@ -277,6 +283,49 @@ fleet hooks remove    # 完整卸载
 - 必填字段验证，带错误高亮
 - 提交时自动跳转到第一个空的必填字段
 
+## 桌面通知
+
+Claude Code 完成任务或发送通知时弹出系统通知。独立运行，无需 master/观察者进程。
+
+### 工作原理
+
+1. `notifier.js` 在 `fleet hooks install` 时随 `hook-client.js` 一起安装
+2. `Stop` 事件触发时，发送桌面通知，以项目名作为副标题，最后一条 AI 消息作为内容
+3. `Notification` 事件触发时，将通知消息转发到桌面
+4. macOS 使用原生 `osascript display notification`，Linux 使用 `notify-send`，Windows 使用 PowerShell toast
+
+### 配置
+
+存储在 `~/.config/claude-code-fleet/notify.json`：
+
+```json
+{
+  "enabled": true,
+  "sound": true,
+  "events": {
+    "stop": true,
+    "notification": true
+  }
+}
+```
+
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `enabled` | `true` | 总开关 |
+| `sound` | `true` | 播放系统提示音 |
+| `events.stop` | `true` | Claude Code 完成响应时通知 |
+| `events.notification` | `true` | Claude 发送通知事件时转发 |
+
+### 命令行
+
+```bash
+fleet notify              # 查看当前通知配置
+fleet notify --on         # 开启通知
+fleet notify --off        # 关闭通知
+fleet notify --sound      # 开启提示音
+fleet notify --no-sound   # 关闭提示音
+```
+
 ## 数据与状态
 
 所有状态存储在 `~/.config/claude-code-fleet/` 目录下：
@@ -287,6 +336,8 @@ fleet hooks remove    # 完整卸载
 | `fleet-state.json` | 后台实例 PID（Fleet 模式） |
 | `fleet.sock` | Unix 域套接字（临时的，观察者模式） |
 | `hooks/hook-client.js` | Claude Code 事件的 Hook 脚本 |
+| `hooks/notifier.js` | 桌面通知模块（由 hook-client 加载） |
+| `notify.json` | 桌面通知配置 |
 | `sessions/<id>.json` | 每个会话的元数据（观察者恢复用） |
 
 ## 许可证

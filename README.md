@@ -17,6 +17,7 @@ Run multiple Claude Code instances with different API keys, models, and endpoint
 - **Fleet Mode** — Define multiple instances in a config file and manage them as background processes
 - **HTTP Proxy** — Per-profile or per-run proxy support; auto-sets `HTTP_PROXY` and `HTTPS_PROXY` environment variables
 - **Interactive UI** — Arrow-key selectors, confirmation dialogs, and multi-field input forms, all in the terminal
+- **Desktop Notifications** — System notifications when Claude Code finishes a task or sends a notification, with configurable sound
 
 ## Prerequisites
 
@@ -46,6 +47,10 @@ fleet run --proxy=http://127.0.0.1:7890
 
 # Start the observer dashboard
 fleet start
+
+# Configure desktop notifications
+fleet notify --on
+fleet notify --no-sound
 
 # Or initialize fleet config for multi-instance management
 fleet init
@@ -108,6 +113,7 @@ Define multiple instances in a config file and manage them as background process
 | `fleet restart` | — | Stop then start all (or `--only`) instances |
 | `fleet ls` | `list` | List currently running background instances with PID and model |
 | `fleet status` | — | Show detailed configuration for all instances |
+| `fleet notify` | — | Configure desktop notifications (`--on`, `--off`, `--sound`, `--no-sound`) |
 | `fleet init` | — | Create `fleet.config.json` from template in the current directory |
 
 ### Global Options
@@ -277,6 +283,49 @@ All interactive prompts are built with Ink (React for the terminal):
 - Required field validation with error highlighting
 - Auto-jumps to first empty required field on submit
 
+## Desktop Notifications
+
+Receive system notifications when Claude Code finishes a task or sends a notification. Works independently — no need for the master/observer to be running.
+
+### How It Works
+
+1. `notifier.js` is copied alongside `hook-client.js` during `fleet hooks install`
+2. When a `Stop` event fires, a desktop notification is sent with the project name as subtitle and the last AI message as body
+3. When a `Notification` event fires, the notification message is forwarded to the desktop
+4. macOS uses native `osascript display notification`, Linux uses `notify-send`, Windows uses PowerShell toast
+
+### Configuration
+
+Stored in `~/.config/claude-code-fleet/notify.json`:
+
+```json
+{
+  "enabled": true,
+  "sound": true,
+  "events": {
+    "stop": true,
+    "notification": true
+  }
+}
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `enabled` | `true` | Master toggle for all notifications |
+| `sound` | `true` | Play system notification sound |
+| `events.stop` | `true` | Notify when Claude Code finishes a response |
+| `events.notification` | `true` | Notify when Claude sends a notification event |
+
+### CLI
+
+```bash
+fleet notify              # Show current notification config
+fleet notify --on         # Enable notifications
+fleet notify --off        # Disable notifications
+fleet notify --sound      # Enable notification sound
+fleet notify --no-sound   # Disable notification sound
+```
+
 ## Data & State
 
 All state is stored under `~/.config/claude-code-fleet/`:
@@ -287,6 +336,8 @@ All state is stored under `~/.config/claude-code-fleet/`:
 | `fleet-state.json` | Background instance PIDs (Fleet mode) |
 | `fleet.sock` | Unix domain socket (transient, Observer mode) |
 | `hooks/hook-client.js` | Hook script for Claude Code events |
+| `hooks/notifier.js` | Desktop notification module (loaded by hook-client) |
+| `notify.json` | Desktop notification preferences |
 | `sessions/<id>.json` | Per-session metadata for Observer recovery |
 
 ## License

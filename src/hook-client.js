@@ -114,28 +114,18 @@ async function main() {
       if (!config.enabled) return;
 
       const sid = input.session_id;
-      notifier.updateActivity(sid);
-
-      if (input.hook_event_name === 'PostToolUse') {
-        notifier.checkTimeout(sid, config);
-      }
+      const sound = config.sound;
 
       if (input.hook_event_name === 'Stop') {
-        notifier.clearTimeoutFlag(sid);
-        if (!notifier.isStopNotified(sid)) {
-          const isAbnormal = notifier.detectError(payload.last_assistant_message);
-          if (isAbnormal && !config.events.error) { /* skip */ }
-          else if (!isAbnormal && !config.events.stop) { /* skip */ }
-          else {
-            notifier.sendNotification({
-              title: isAbnormal ? '⚠ 任务异常结束' : '✅ 任务完成',
-              body: payload.last_assistant_message,
-              cwd: payload.cwd,
-              sessionId: sid,
-              platform: process.platform,
-            });
-            notifier.markStopNotified(sid);
-          }
+        if (config.events.stop) {
+          notifier.sendNotification({
+            title: 'Claude Code',
+            body: payload.last_assistant_message,
+            cwd: payload.cwd,
+            sessionId: sid,
+            platform: process.platform,
+            sound,
+          });
         }
       }
 
@@ -146,6 +136,7 @@ async function main() {
           cwd: payload.cwd,
           sessionId: sid,
           platform: process.platform,
+          sound,
         });
       }
     } catch { /* notification failures must not affect main flow */ }

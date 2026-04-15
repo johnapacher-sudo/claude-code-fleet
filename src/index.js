@@ -702,11 +702,11 @@ function cmdNotify(opts) {
     return;
   }
 
-  if (opts.timeout) {
+  if (opts.sound !== undefined) {
     const existing = loadNotifyConfigFile() || {};
-    existing.timeoutMinutes = parseInt(opts.timeout, 10) || 5;
+    existing.sound = opts.sound;
     saveNotifyConfig(existing);
-    console.log(ANSI.green(`  Timeout threshold set to ${existing.timeoutMinutes} minutes.`));
+    console.log(ANSI.green(`  Notification sound ${opts.sound ? 'enabled' : 'disabled'}.`));
     return;
   }
 
@@ -716,19 +716,15 @@ function cmdNotify(opts) {
     console.log(ANSI.bold('\nNotification Config:'));
     console.log(ANSI.dim('  No config file found. Using defaults:\n'));
     console.log('  enabled:       true');
-    console.log('  timeout:       5 minutes');
+    console.log('  sound:         true');
     console.log('  events.stop:   true');
-    console.log('  events.error:  true');
-    console.log('  events.timeout:true');
     console.log('  events.notification: true');
   } else {
     console.log(ANSI.bold('\nNotification Config:'));
     console.log(`  file: ${ANSI.dim(configPath)}\n`);
     console.log(`  enabled:       ${config.enabled !== false ? ANSI.green('true') : ANSI.red('false')}`);
-    console.log(`  timeout:       ${config.timeoutMinutes || 5} minutes`);
+    console.log(`  sound:         ${config.sound !== false ? ANSI.green('true') : ANSI.red('false')}`);
     console.log(`  events.stop:   ${config.events?.stop !== false ? ANSI.green('true') : ANSI.red('false')}`);
-    console.log(`  events.error:  ${config.events?.error !== false ? ANSI.green('true') : ANSI.red('false')}`);
-    console.log(`  events.timeout:${config.events?.timeout !== false ? ANSI.green('true') : ANSI.red('false')}`);
     console.log(`  events.notification: ${config.events?.notification !== false ? ANSI.green('true') : ANSI.red('false')}`);
   }
   console.log();
@@ -814,8 +810,10 @@ function parseArgs(argv) {
       opts.on = true;
     } else if (arg === '--off') {
       opts.off = true;
-    } else if (arg === '--timeout' && argv[i + 1]) {
-      opts.timeout = argv[++i];
+    } else if (arg === '--sound') {
+      opts.sound = true;
+    } else if (arg === '--no-sound') {
+      opts.sound = false;
     } else {
       positional.push(arg);
     }
@@ -867,7 +865,8 @@ ${ANSI.bold('Examples:')}
   fleet up                          # Start all instances (background)
   fleet notify                      # Show notification config
   fleet notify --on                 # Enable notifications
-  fleet notify --timeout 10         # Set 10-minute timeout
+  fleet notify --no-sound           # Disable notification sound
+  fleet notify --sound              # Enable notification sound
 `);
 }
 

@@ -150,8 +150,5 @@ describe('hook-client', () => {
     expect(src).toContain("require('./notifier')");
     expect(src).toContain('loadNotifyConfig');
     expect(src).toContain('sendNotification');
-    expect(src).toContain('checkTimeout');
-    expect(src).toContain('detectError');
-    expect(src).toContain('updateActivity');
   });
 });

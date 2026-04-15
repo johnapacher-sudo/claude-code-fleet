@@ -11,35 +11,14 @@ const CONFIG_DIR = path.join(os.homedir(), '.config', 'claude-code-fleet');
 const SESSIONS_DIR = path.join(CONFIG_DIR, 'sessions');
 const NOTIFY_CONFIG_PATH = path.join(CONFIG_DIR, 'notify.json');
 
-const ERROR_KEYWORDS = ['error', 'failed', 'exception'];
-
 const DEFAULT_CONFIG = Object.freeze({
   enabled: true,
-  timeoutMinutes: 5,
+  sound: true,
   events: Object.freeze({
     stop: true,
-    error: true,
-    timeout: true,
     notification: true,
   }),
 });
-
-// --- Error detection ---
-
-/**
- * Detect whether a message contains error-related keywords.
- * Returns false for null/empty/falsy messages.
- *
- * @param {string|null|undefined} message
- * @returns {boolean}
- */
-function detectError(message) {
-  if (!message || typeof message !== 'string') {
-    return false;
-  }
-  const lower = message.toLowerCase();
-  return ERROR_KEYWORDS.some((keyword) => lower.includes(keyword));
-}
 
 // --- Config loading ---
 
@@ -70,115 +49,7 @@ function loadNotifyConfig() {
 
 // --- Activity tracking ---
 
-/**
- * Write (or overwrite) the activity timestamp file for a session.
- *
- * @param {string} sessionId
- */
-function updateActivity(sessionId) {
-  try {
-    fs.mkdirSync(SESSIONS_DIR, { recursive: true });
-    const filePath = path.join(SESSIONS_DIR, `${sessionId}.last-activity`);
-    fs.writeFileSync(filePath, String(Date.now()));
-  } catch { /* ignore write failures */ }
-}
-
-/**
- * Remove the timeout-notified flag file so a new timeout can fire later.
- *
- * @param {string} sessionId
- */
-function clearTimeoutFlag(sessionId) {
-  try {
-    const flagPath = path.join(SESSIONS_DIR, `${sessionId}.timeout-notified`);
-    if (fs.existsSync(flagPath)) {
-      fs.unlinkSync(flagPath);
-    }
-  } catch { /* ignore */ }
-}
-
-// --- Stop-notification flags (per-session, cleared when session restarts) ---
-
-/**
- * Check whether a stop notification has already been sent for this session.
- *
- * @param {string} sessionId
- * @returns {boolean}
- */
-function isStopNotified(sessionId) {
-  try {
-    const flagPath = path.join(SESSIONS_DIR, `${sessionId}.stop-notified`);
-    return fs.existsSync(flagPath);
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Mark that a stop notification was sent for this session.
- *
- * @param {string} sessionId
- */
-function markStopNotified(sessionId) {
-  try {
-    fs.mkdirSync(SESSIONS_DIR, { recursive: true });
-    const flagPath = path.join(SESSIONS_DIR, `${sessionId}.stop-notified`);
-    fs.writeFileSync(flagPath, String(Date.now()));
-  } catch { /* ignore */ }
-}
-
-/**
- * Clear the stop-notified flag for a session.
- * Currently a no-op because the flag is per-session and ephemeral,
- * but provided for API completeness.
- *
- * @param {string} sessionId
- */
-function clearStopNotified(_sessionId) {
-  // Intentionally a no-op: per-session flags are not reused across sessions.
-}
-
-// --- Timeout check ---
-
-/**
- * Check whether a session has exceeded its timeout threshold.
- * If so, send a notification (unless one was already sent).
- *
- * @param {string} sessionId
- * @param {object} config - The merged notification config
- * @returns {boolean} true if a timeout notification was fired
- */
-function checkTimeout(sessionId, config) {
-  try {
-    const flagPath = path.join(SESSIONS_DIR, `${sessionId}.timeout-notified`);
-    if (fs.existsSync(flagPath)) {
-      return false;
-    }
-
-    const activityPath = path.join(SESSIONS_DIR, `${sessionId}.last-activity`);
-    if (!fs.existsSync(activityPath)) {
-      return false;
-    }
-
-    const lastActivity = parseInt(fs.readFileSync(activityPath, 'utf-8'), 10);
-    const elapsed = Date.now() - lastActivity;
-    const threshold = (config.timeoutMinutes || DEFAULT_CONFIG.timeoutMinutes) * 60 * 1000;
-
-    if (elapsed >= threshold) {
-      fs.writeFileSync(flagPath, String(Date.now()));
-      sendNotification({
-        title: 'Fleet',
-        body: `Session ${sessionId.slice(0, 8)} has been inactive for ${Math.round(elapsed / 60000)}m`,
-        sessionId,
-        platform: process.platform,
-      });
-      return true;
-    }
-    return false;
-  } catch {
-    return false;
-  }
-}
+// (removed — timeout detection requires a long-running process)
 
 // --- Helpers ---
 
@@ -216,7 +87,7 @@ function truncateBody(body, maxLength = 200) {
  * @param {string} body
  * @param {string} sessionId
  */
-function sendMacOS(title, body, cwd, sessionId) {
+function sendMacOS(title, body, cwd, sessionId, sound) {
   try {
     const safeBody = truncateBody(body);
     const safeTitle = truncateBody(title, 60);
@@ -225,7 +96,8 @@ function sendMacOS(title, body, cwd, sessionId) {
     const escapedTitle = safeTitle.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     const escapedProject = project.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     const subtitlePart = escapedProject ? ` subtitle "${escapedProject}"` : '';
-    const script = `display notification "${escapedBody}" with title "${escapedTitle}"${subtitlePart}`;
+    const soundPart = sound !== false ? ' sound name "default"' : '';
+    const script = `display notification "${escapedBody}" with title "${escapedTitle}"${subtitlePart}${soundPart}`;
     execSync(`osascript -e '${escapeShell(script)}'`, { stdio: 'pipe', timeout: 5000 });
   } catch { /* silently ignore notification failures */ }
 }
@@ -293,11 +165,11 @@ function sendWindows(title, body) {
  * @param {string} params.sessionId
  * @param {string} [params.platform] - Override platform detection (for testing)
  */
-function sendNotification({ title, body, cwd, sessionId, platform }) {
+function sendNotification({ title, body, cwd, sessionId, platform, sound }) {
   const p = platform || process.platform;
   switch (p) {
     case 'darwin':
-      sendMacOS(title, body, cwd, sessionId);
+      sendMacOS(title, body, cwd, sessionId, sound);
       break;
     case 'linux':
       sendLinux(title, body);
@@ -313,14 +185,7 @@ function sendNotification({ title, body, cwd, sessionId, platform }) {
 // --- Exports ---
 
 module.exports = {
-  detectError,
   loadNotifyConfig,
-  updateActivity,
-  clearTimeoutFlag,
-  isStopNotified,
-  markStopNotified,
-  clearStopNotified,
-  checkTimeout,
   sendNotification,
 
   // Expose internals for testing
