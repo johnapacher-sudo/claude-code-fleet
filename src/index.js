@@ -664,6 +664,76 @@ function cmdHooksStatus() {
   console.log();
 }
 
+// ─── Notify commands ──────────────────────────────────────────────────────
+
+function getNotifyConfigPath() {
+  return path.join(GLOBAL_CONFIG_DIR, 'notify.json');
+}
+
+function loadNotifyConfigFile() {
+  const p = getNotifyConfigPath();
+  if (!fs.existsSync(p)) return null;
+  try { return JSON.parse(fs.readFileSync(p, 'utf-8')); }
+  catch { return null; }
+}
+
+function saveNotifyConfig(config) {
+  const dir = path.dirname(getNotifyConfigPath());
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(getNotifyConfigPath(), JSON.stringify(config, null, 2) + '\n');
+}
+
+function cmdNotify(opts) {
+  const configPath = getNotifyConfigPath();
+
+  if (opts.on) {
+    const existing = loadNotifyConfigFile() || {};
+    existing.enabled = true;
+    saveNotifyConfig(existing);
+    console.log(ANSI.green('  Notifications enabled.'));
+    return;
+  }
+
+  if (opts.off) {
+    const existing = loadNotifyConfigFile() || {};
+    existing.enabled = false;
+    saveNotifyConfig(existing);
+    console.log(ANSI.yellow('  Notifications disabled.'));
+    return;
+  }
+
+  if (opts.timeout) {
+    const existing = loadNotifyConfigFile() || {};
+    existing.timeoutMinutes = parseInt(opts.timeout, 10) || 5;
+    saveNotifyConfig(existing);
+    console.log(ANSI.green(`  Timeout threshold set to ${existing.timeoutMinutes} minutes.`));
+    return;
+  }
+
+  // Show current config
+  const config = loadNotifyConfigFile();
+  if (!config) {
+    console.log(ANSI.bold('\nNotification Config:'));
+    console.log(ANSI.dim('  No config file found. Using defaults:\n'));
+    console.log('  enabled:       true');
+    console.log('  timeout:       5 minutes');
+    console.log('  events.stop:   true');
+    console.log('  events.error:  true');
+    console.log('  events.timeout:true');
+    console.log('  events.notification: true');
+  } else {
+    console.log(ANSI.bold('\nNotification Config:'));
+    console.log(`  file: ${ANSI.dim(configPath)}\n`);
+    console.log(`  enabled:       ${config.enabled !== false ? ANSI.green('true') : ANSI.red('false')}`);
+    console.log(`  timeout:       ${config.timeoutMinutes || 5} minutes`);
+    console.log(`  events.stop:   ${config.events?.stop !== false ? ANSI.green('true') : ANSI.red('false')}`);
+    console.log(`  events.error:  ${config.events?.error !== false ? ANSI.green('true') : ANSI.red('false')}`);
+    console.log(`  events.timeout:${config.events?.timeout !== false ? ANSI.green('true') : ANSI.red('false')}`);
+    console.log(`  events.notification: ${config.events?.notification !== false ? ANSI.green('true') : ANSI.red('false')}`);
+  }
+  console.log();
+}
+
 function cmdRestart(config, onlyNames) {
   cmdDown();
   cmdUp(config, onlyNames);
@@ -740,6 +810,12 @@ function parseArgs(argv) {
       opts.version = true;
     } else if (arg === '--help' || arg === '-h') {
       opts.help = true;
+    } else if (arg === '--on') {
+      opts.on = true;
+    } else if (arg === '--off') {
+      opts.off = true;
+    } else if (arg === '--timeout' && argv[i + 1]) {
+      opts.timeout = argv[++i];
     } else {
       positional.push(arg);
     }
@@ -770,6 +846,7 @@ ${ANSI.bold('Commands:')}
   ls                  List running instances
   status              Show instance configuration details
   init                Create a fleet.config.json from template
+  notify              Configure desktop notifications
 
 ${ANSI.bold('Options:')}
   --config <path>   Use specific config file
@@ -788,6 +865,9 @@ ${ANSI.bold('Examples:')}
   fleet hooks status                # Check hook installation status
   fleet model add                   # Add a model profile interactively
   fleet up                          # Start all instances (background)
+  fleet notify                      # Show notification config
+  fleet notify --on                 # Enable notifications
+  fleet notify --timeout 10         # Set 10-minute timeout
 `);
 }
 
@@ -872,6 +952,12 @@ function main() {
     return;
   }
 
+  // Notify configuration (doesn't need fleet config)
+  if (command === 'notify') {
+    cmdNotify(opts);
+    return;
+  }
+
   // Remaining commands need fleet config
   const config = loadConfig(opts.config);
 
@@ -910,6 +996,7 @@ module.exports = {
   getModelsPath, loadModels, saveModels,
   cmdModelList, cmdInit, cmdHooksStatus, cmdLs, cmdStatus, cmdDown,
   cmdHooksInstall, cmdHooksRemove,
+  getNotifyConfigPath, loadNotifyConfigFile, saveNotifyConfig, cmdNotify,
   filterInstances,
   parseArgs, main, ANSI, CONFIG_FILENAME, GLOBAL_CONFIG_DIR, STATE_FILE,
 };
