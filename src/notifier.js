@@ -216,13 +216,16 @@ function truncateBody(body, maxLength = 200) {
  * @param {string} body
  * @param {string} sessionId
  */
-function sendMacOS(title, body, sessionId) {
+function sendMacOS(title, body, cwd, sessionId) {
   try {
     const safeBody = truncateBody(body);
     const safeTitle = truncateBody(title, 60);
+    const project = cwd ? path.basename(cwd) : '';
     const escapedBody = safeBody.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     const escapedTitle = safeTitle.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-    const script = `display notification "${escapedBody}" with title "${escapedTitle}" subtitle "${sessionId.slice(0, 8)}"`;
+    const escapedProject = project.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const subtitlePart = escapedProject ? ` subtitle "${escapedProject}"` : '';
+    const script = `display notification "${escapedBody}" with title "${escapedTitle}"${subtitlePart}`;
     execSync(`osascript -e '${escapeShell(script)}'`, { stdio: 'pipe', timeout: 5000 });
   } catch { /* silently ignore notification failures */ }
 }
@@ -290,11 +293,11 @@ function sendWindows(title, body) {
  * @param {string} params.sessionId
  * @param {string} [params.platform] - Override platform detection (for testing)
  */
-function sendNotification({ title, body, sessionId, platform }) {
+function sendNotification({ title, body, cwd, sessionId, platform }) {
   const p = platform || process.platform;
   switch (p) {
     case 'darwin':
-      sendMacOS(title, body, sessionId);
+      sendMacOS(title, body, cwd, sessionId);
       break;
     case 'linux':
       sendLinux(title, body);

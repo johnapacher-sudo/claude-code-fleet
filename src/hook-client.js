@@ -130,6 +130,7 @@ async function main() {
             notifier.sendNotification({
               title: isAbnormal ? '⚠ 任务异常结束' : '✅ 任务完成',
               body: payload.last_assistant_message,
+              cwd: payload.cwd,
               sessionId: sid,
               platform: process.platform,
             });
@@ -142,6 +143,7 @@ async function main() {
         notifier.sendNotification({
           title: 'Claude 通知',
           body: payload.message,
+          cwd: payload.cwd,
           sessionId: sid,
           platform: process.platform,
         });
