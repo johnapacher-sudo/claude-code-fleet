@@ -29,10 +29,6 @@ class Master {
   }
 
   async start() {
-    if (!fs.existsSync(HOOKS_DIR)) fs.mkdirSync(HOOKS_DIR, { recursive: true });
-    fs.copyFileSync(HOOK_CLIENT_SRC, HOOK_CLIENT_DST);
-    if (fs.existsSync(NOTIFIER_SRC)) fs.copyFileSync(NOTIFIER_SRC, NOTIFIER_DST);
-    if (fs.existsSync(FOCUS_SESSION_SRC)) fs.copyFileSync(FOCUS_SESSION_SRC, FOCUS_SESSION_DST);
     ensureHooks();
     this.loadPersistedSessions();
     // Start TUI first (async Ink init) so _renderCallback is ready before events arrive
@@ -269,6 +265,11 @@ function summarizeToolUse(payload) {
 }
 
 function ensureHooks() {
+  if (!fs.existsSync(HOOKS_DIR)) fs.mkdirSync(HOOKS_DIR, { recursive: true });
+  fs.copyFileSync(HOOK_CLIENT_SRC, HOOK_CLIENT_DST);
+  if (fs.existsSync(NOTIFIER_SRC)) fs.copyFileSync(NOTIFIER_SRC, NOTIFIER_DST);
+  if (fs.existsSync(FOCUS_SESSION_SRC)) fs.copyFileSync(FOCUS_SESSION_SRC, FOCUS_SESSION_DST);
+
   let settings = {};
   try {
     if (fs.existsSync(SETTINGS_PATH)) {
