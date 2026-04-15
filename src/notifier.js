@@ -10,7 +10,6 @@ const { execSync } = require('child_process');
 const CONFIG_DIR = path.join(os.homedir(), '.config', 'claude-code-fleet');
 const SESSIONS_DIR = path.join(CONFIG_DIR, 'sessions');
 const NOTIFY_CONFIG_PATH = path.join(CONFIG_DIR, 'notify.json');
-const HOOKS_DIR = path.join(CONFIG_DIR, 'hooks');
 
 const ERROR_KEYWORDS = ['error', 'failed', 'exception'];
 
@@ -184,21 +183,7 @@ function checkTimeout(sessionId, config) {
 // --- Helpers ---
 
 /**
- * Check whether terminal-notifier is available on macOS.
- *
- * @returns {boolean}
- */
-function hasTerminalNotifier() {
-  try {
-    execSync('which terminal-notifier', { stdio: 'pipe' });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Escape a string for safe inclusion in a shell command argument.
+ * Escape a string for safe inclusion in a single-quoted shell argument.
  *
  * @param {string} str
  * @returns {string}
@@ -225,7 +210,7 @@ function truncateBody(body, maxLength = 200) {
 // --- Platform-specific notification senders ---
 
 /**
- * Send a macOS notification via terminal-notifier (preferred) or osascript (fallback).
+ * Send a macOS notification via osascript.
  *
  * @param {string} title
  * @param {string} body
@@ -235,21 +220,10 @@ function sendMacOS(title, body, sessionId) {
   try {
     const safeBody = truncateBody(body);
     const safeTitle = truncateBody(title, 60);
-
-    if (hasTerminalNotifier()) {
-      const focusScript = path.join(HOOKS_DIR, 'focus-session.js');
-      const cmd = [
-        'terminal-notifier',
-        '-title', `'${escapeShell(safeTitle)}'`,
-        '-message', `'${escapeShell(safeBody)}'`,
-        '-subtitle', `'${escapeShell(sessionId.slice(0, 8))}'`,
-        '-execute', `'node ${escapeShell(focusScript)} ${escapeShell(sessionId)}'`,
-      ].join(' ');
-      execSync(cmd, { stdio: 'pipe', timeout: 5000 });
-    } else {
-      const script = `display notification "${safeBody.replace(/"/g, '\\"')}" with title "${safeTitle.replace(/"/g, '\\"')}" subtitle "${sessionId.slice(0, 8)}"`;
-      execSync(`osascript -e '${escapeShell(script)}'`, { stdio: 'pipe', timeout: 5000 });
-    }
+    const escapedBody = safeBody.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const escapedTitle = safeTitle.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const script = `display notification "${escapedBody}" with title "${escapedTitle}" subtitle "${sessionId.slice(0, 8)}"`;
+    execSync(`osascript -e '${escapeShell(script)}'`, { stdio: 'pipe', timeout: 5000 });
   } catch { /* silently ignore notification failures */ }
 }
 
@@ -345,17 +319,10 @@ module.exports = {
   clearStopNotified,
   checkTimeout,
   sendNotification,
-  sendMacOS,
-  sendLinux,
-  sendWindows,
-  hasTerminalNotifier,
-  escapeShell,
-  truncateBody,
 
   // Expose internals for testing
   _DEFAULT_CONFIG: DEFAULT_CONFIG,
   _CONFIG_DIR: CONFIG_DIR,
   _SESSIONS_DIR: SESSIONS_DIR,
   _NOTIFY_CONFIG_PATH: NOTIFY_CONFIG_PATH,
-  _HOOKS_DIR: HOOKS_DIR,
 };

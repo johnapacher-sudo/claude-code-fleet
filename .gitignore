@@ -4,3 +4,4 @@ fleet.config.local.json
 .fleet-env
 *.log
 .DS_Store
+.superpowers/
