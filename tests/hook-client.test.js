@@ -11,7 +11,6 @@ import net from 'net';
 const hookClientPath = path.resolve(process.cwd(), 'src/hook-client.js');
 
 // Create a temporary socket server for integration testing
-import net from 'net';
 
 describe('hook-client', () => {
   let server;
@@ -144,5 +143,15 @@ describe('hook-client', () => {
     const src = fs.readFileSync(hookClientPath, 'utf-8');
     expect(src).toContain('stoppedAt');
     expect(src).toContain('lastMessage');
+  });
+
+  it('integrates notifier module', () => {
+    const src = fs.readFileSync(hookClientPath, 'utf-8');
+    expect(src).toContain("require('./notifier')");
+    expect(src).toContain('loadNotifyConfig');
+    expect(src).toContain('sendNotification');
+    expect(src).toContain('checkTimeout');
+    expect(src).toContain('detectError');
+    expect(src).toContain('updateActivity');
   });
 });
