@@ -79,7 +79,7 @@ function loadNotifyConfig() {
 function updateActivity(sessionId) {
   try {
     fs.mkdirSync(SESSIONS_DIR, { recursive: true });
-    const filePath = path.join(SESSIONS_DIR, `${sessionId}.activity`);
+    const filePath = path.join(SESSIONS_DIR, `${sessionId}.last-activity`);
     fs.writeFileSync(filePath, String(Date.now()));
   } catch { /* ignore write failures */ }
 }
@@ -156,7 +156,7 @@ function checkTimeout(sessionId, config) {
       return false;
     }
 
-    const activityPath = path.join(SESSIONS_DIR, `${sessionId}.activity`);
+    const activityPath = path.join(SESSIONS_DIR, `${sessionId}.last-activity`);
     if (!fs.existsSync(activityPath)) {
       return false;
     }

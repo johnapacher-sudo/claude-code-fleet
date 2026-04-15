@@ -48,7 +48,7 @@ describe('notifier', () => {
       expect(detectError('NullPointerException at line 42')).toBe(true);
     });
 
-    it('returns false for message containing "error" as part of a normal word', () => {
+    it('returns true for message containing "errors" (intentional over-detection)', () => {
       expect(detectError('Fixed all errors in the codebase')).toBe(true);
     });
   });
