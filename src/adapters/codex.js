@@ -21,14 +21,15 @@ class CodexAdapter extends ToolAdapter {
 
   buildArgs(entry) {
     const args = ['--model', entry.model, '-c', 'approval_policy="never"'];
+    if (entry.apiBaseUrl) args.push('-c', `openai_base_url=${JSON.stringify(entry.apiBaseUrl)}`);
     if (entry.args) args.push(...entry.args);
     return args;
   }
 
   buildEnv(entry, baseEnv) {
     const env = { ...baseEnv, FLEET_MODEL_NAME: entry.name };
+    delete env.OPENAI_BASE_URL;
     if (entry.apiKey) env.OPENAI_API_KEY = entry.apiKey;
-    if (entry.apiBaseUrl) env.OPENAI_BASE_URL = entry.apiBaseUrl;
     return env;
   }
 
