@@ -45,7 +45,7 @@ function modelWarning(m) {
 }
 
 function modelItem(m) {
-  const toolTag = m.tool && m.tool !== 'claude' ? `[${m.tool.charAt(0).toUpperCase() + m.tool.slice(1)}] ` : '';
+  const toolTag = m.tool ? `[${m.tool.charAt(0).toUpperCase() + m.tool.slice(1)}] ` : '';
   return {
     display: `${m.name || '(unnamed)'} (${toolTag}${m.model || 'default'})`,
     label: m.name || '(unnamed)',
