@@ -189,20 +189,37 @@ export function renderConfirm({ title, items, dangerMode = false }) {
 
 // ─── Input Form ──────────────────────────────────────────────────────────────
 
-function FormField({ field, isActive, value, error }) {
+function FormField({ field, isActive, value, cursorPos, error }) {
   const displayValue = value || '';
 
-  return h(Box, { gap: 1 },
-    h(Text, { color: isActive ? (error ? '#f85149' : '#a78bfa') : '#8b949e', bold: isActive },
-      `${field.label}:`),
-    h(Box, {},
-      h(Text, { color: error ? '#f85149' : '#e0e0e0' },
-        displayValue,
-        isActive ? h(Text, { color: error ? '#f85149' : '#a78bfa', inverse: true }, '\u2588') : null,
+  if (!isActive) {
+    return h(Box, { gap: 1 },
+      h(Text, { color: '#8b949e' }, `${field.label}:`),
+      h(Box, {},
+        displayValue
+          ? h(Text, { color: '#e0e0e0' }, displayValue)
+          : field.placeholder
+            ? h(Text, { color: '#525252', dimColor: true }, ` (${field.placeholder})`)
+            : null,
       ),
+    );
+  }
+
+  const accentColor = error ? '#f85149' : '#a78bfa';
+  const pos = Math.min(cursorPos ?? displayValue.length, displayValue.length);
+  const before = displayValue.slice(0, pos);
+  const cursorChar = displayValue[pos] || ' ';
+  const after = displayValue.slice(pos + 1);
+
+  return h(Box, { gap: 1 },
+    h(Text, { color: accentColor, bold: true }, `${field.label}:`),
+    h(Box, {},
+      before ? h(Text, { color: error ? '#f85149' : '#e0e0e0' }, before) : null,
+      h(Text, { color: accentColor, inverse: true }, cursorChar),
+      after ? h(Text, { color: error ? '#f85149' : '#e0e0e0' }, after) : null,
       !displayValue && field.placeholder
         ? h(Text, { color: error ? '#f85149' : '#525252', dimColor: !error },
-            error ? ` (${field.label} is required)` : ` (${field.placeholder})`)
+            error ? `(${field.label} is required)` : `(${field.placeholder})`)
         : null,
     ),
   );
@@ -211,60 +228,97 @@ function FormField({ field, isActive, value, error }) {
 function InputForm({ title, fields, values: initialValues, requiredFields, onSubmit, onCancel }) {
   const [currentField, setCurrentField] = useState(0);
   const [formValues, setFormValues] = useState(initialValues || {});
+  const [cursorPositions, setCursorPositions] = useState({});
   const [validationErrors, setValidationErrors] = useState({});
   const [triedSubmit, setTriedSubmit] = useState(false);
 
+  function getCursorPos(label) {
+    const pos = cursorPositions[label];
+    if (pos !== undefined) return pos;
+    return (formValues[label] || '').length;
+  }
+
   useInput((input, key) => {
-    // Cancel
-    if (key.ctrl && input === 'c') {
-      onCancel();
-      return;
-    }
-    // Only q on non-text fields or with Ctrl
-    if (input === 'q' && key.ctrl) {
-      onCancel();
-      return;
-    }
-    // Escape cancels
-    if (key.escape) {
+    if ((key.ctrl && input === 'c') || (input === 'q' && key.ctrl) || key.escape) {
       onCancel();
       return;
     }
 
-    // Navigation
+    // Field navigation
     if (key.upArrow) {
       setCurrentField(i => (i - 1 + fields.length) % fields.length);
       return;
     }
-    if (key.downArrow) {
-      setCurrentField(i => (i + 1) % fields.length);
-      return;
-    }
-    if (key.tab) {
+    if (key.downArrow || key.tab) {
       setCurrentField(i => (i + 1) % fields.length);
       return;
     }
 
-    // Editing the current field
     const field = fields[currentField];
-    const currentVal = formValues[field.label] || '';
+    const label = field.label;
 
-    if (key.backspace || key.delete) {
-      const newVal = currentVal.slice(0, -1);
-      setFormValues(prev => ({ ...prev, [field.label]: newVal }));
-      // Clear error for this field if user is editing
-      if (validationErrors[field.label]) {
-        setValidationErrors(prev => {
-          const next = { ...prev };
-          delete next[field.label];
-          return next;
-        });
+    // Cursor movement
+    if (key.leftArrow) {
+      setCursorPositions(prev => {
+        const pos = prev[label] !== undefined ? prev[label] : (formValues[label] || '').length;
+        return { ...prev, [label]: Math.max(0, pos - 1) };
+      });
+      return;
+    }
+    if (key.rightArrow) {
+      setCursorPositions(prev => {
+        const val = formValues[label] || '';
+        const pos = prev[label] !== undefined ? prev[label] : val.length;
+        return { ...prev, [label]: Math.min(val.length, pos + 1) };
+      });
+      return;
+    }
+
+    // Home / Ctrl+A → move to start
+    if (key.ctrl && input === 'a') {
+      setCursorPositions(prev => ({ ...prev, [label]: 0 }));
+      return;
+    }
+    // End / Ctrl+E → move to end
+    if (key.ctrl && input === 'e') {
+      setCursorPositions(prev => ({ ...prev, [label]: (formValues[label] || '').length }));
+      return;
+    }
+
+    // Backspace: delete char before cursor
+    if (key.backspace) {
+      setFormValues(prev => {
+        const val = prev[label] || '';
+        const pos = cursorPositions[label] !== undefined ? cursorPositions[label] : val.length;
+        if (pos <= 0) return prev;
+        return { ...prev, [label]: val.slice(0, pos - 1) + val.slice(pos) };
+      });
+      setCursorPositions(prev => {
+        const pos = prev[label] !== undefined ? prev[label] : (formValues[label] || '').length;
+        return { ...prev, [label]: Math.max(0, pos - 1) };
+      });
+      if (validationErrors[label]) {
+        setValidationErrors(prev => { const n = { ...prev }; delete n[label]; return n; });
       }
       return;
     }
 
+    // Delete key: delete char at cursor
+    if (key.delete) {
+      setFormValues(prev => {
+        const val = prev[label] || '';
+        const pos = cursorPositions[label] !== undefined ? cursorPositions[label] : val.length;
+        if (pos >= val.length) return prev;
+        return { ...prev, [label]: val.slice(0, pos) + val.slice(pos + 1) };
+      });
+      if (validationErrors[label]) {
+        setValidationErrors(prev => { const n = { ...prev }; delete n[label]; return n; });
+      }
+      return;
+    }
+
+    // Submit
     if (key.return) {
-      // Check required fields
       const required = requiredFields || [];
       const errors = {};
       let firstEmpty = -1;
@@ -275,30 +329,29 @@ function InputForm({ title, fields, values: initialValues, requiredFields, onSub
           if (firstEmpty === -1) firstEmpty = i;
         }
       }
-
       if (Object.keys(errors).length > 0) {
         setValidationErrors(errors);
         setTriedSubmit(true);
-        // Jump to first empty required field
         if (firstEmpty !== -1) setCurrentField(firstEmpty);
         return;
       }
-
       onSubmit(formValues);
       return;
     }
 
-    // Regular text input — only accept printable chars
+    // Text input (handles both typing and paste)
     if (input && !key.ctrl && !key.meta) {
-      const newVal = currentVal + input;
-      setFormValues(prev => ({ ...prev, [field.label]: newVal }));
-      // Clear error for this field
-      if (validationErrors[field.label]) {
-        setValidationErrors(prev => {
-          const next = { ...prev };
-          delete next[field.label];
-          return next;
-        });
+      setFormValues(prev => {
+        const val = prev[label] || '';
+        const pos = cursorPositions[label] !== undefined ? cursorPositions[label] : val.length;
+        return { ...prev, [label]: val.slice(0, pos) + input + val.slice(pos) };
+      });
+      setCursorPositions(prev => {
+        const pos = prev[label] !== undefined ? prev[label] : (formValues[label] || '').length;
+        return { ...prev, [label]: pos + input.length };
+      });
+      if (validationErrors[label]) {
+        setValidationErrors(prev => { const n = { ...prev }; delete n[label]; return n; });
       }
     }
   });
@@ -306,7 +359,7 @@ function InputForm({ title, fields, values: initialValues, requiredFields, onSub
   return h(Box, { flexDirection: 'column' },
     h(Text, { color: '#a78bfa', bold: true }, `\u2B22 ${title}`),
     h(Text, { color: COLOR_DIM },
-      '\u2191\u2193 navigate \u00B7 type to edit \u00B7 tab next \u00B7 enter confirm \u00B7 esc cancel'),
+      '\u2190\u2191\u2192\u2193 navigate \u00B7 type to edit \u00B7 tab next \u00B7 enter confirm \u00B7 esc cancel'),
     h(Box, { marginBottom: 1 }),
     ...fields.map((field, i) => {
       const isActive = i === currentField;
@@ -316,6 +369,7 @@ function InputForm({ title, fields, values: initialValues, requiredFields, onSub
         field,
         isActive,
         value: formValues[field.label] !== undefined ? formValues[field.label] : (field.value || ''),
+        cursorPos: isActive ? getCursorPos(field.label) : undefined,
         error: hasError,
       });
     }),
