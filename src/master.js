@@ -5,6 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const { SocketServer } = require('./socket');
 const { TUI } = require('./tui');
+const { registry } = require('./adapters');
 
 const GLOBAL_CONFIG_DIR = path.join(os.homedir(), '.config', 'claude-code-fleet');
 const SOCK_PATH = path.join(GLOBAL_CONFIG_DIR, 'fleet.sock');
@@ -86,16 +87,17 @@ class Master {
         sessionIdShort: sid.slice(0, 4),
         displayName: path.basename(payload.cwd || 'unknown'),
         cwd: payload.cwd || '',
+        tool: payload._tool || 'claude',
         modelName: null,
         fleetModelName: null,
         firstEventAt: Date.now(),
         lastEventAt: Date.now(),
         status: 'idle',
-        awaitsInput: false,  // true after Stop, cleared by PostToolUse
-        turns: [],           // completed turns (max 2)
-        currentTurn: null,   // { summary, summaryTime, actions: [] } or null
-        lastActions: [],     // flat list of last 3 actions (across turns)
-        lastMessage: null,   // latest AI response message (never overwritten by turns)
+        awaitsInput: false,
+        turns: [],
+        currentTurn: null,
+        lastActions: [],
+        lastMessage: null,
         termProgram: null,
         itermSessionId: null,
         pid: null,
@@ -129,18 +131,18 @@ class Master {
     // PostToolUse → add action to current turn
     if (payload.event === 'PostToolUse') {
       worker.status = 'active';
-      worker.awaitsInput = false; // Tool use means Claude is actively working
-      // Ensure a current turn exists
+      worker.awaitsInput = false;
       if (!worker.currentTurn) {
         worker.currentTurn = { summary: '', summaryTime: Date.now(), actions: [] };
       }
-      // Mark previous action as done
       const actions = worker.currentTurn.actions;
       if (actions.length > 0) {
         actions[actions.length - 1].status = 'done';
       }
-      // Add new action as running
-      const summary = summarizeToolUse(payload);
+      const adapter = registry.get(worker.tool || 'claude');
+      const summary = adapter
+        ? adapter.summarizeToolUse(payload.tool_name, payload.tool_input)
+        : `${payload.tool_name}`;
       const parts = summary.split(' ', 2);
       const tool = parts[0] || summary;
       const target = parts.length > 1 ? summary.slice(tool.length + 1) : '';
@@ -216,6 +218,7 @@ class Master {
           sessionIdShort: sid.slice(0, 4),
           displayName: path.basename(data.cwd || 'unknown'),
           cwd: data.cwd || '',
+          tool: data.tool || 'claude',
           modelName: data.model || null,
           fleetModelName: data.fleet_model_name || null,
           firstEventAt: data.timestamp || Date.now(),
@@ -248,81 +251,29 @@ class Master {
   }
 }
 
-function summarizeToolUse(payload) {
-  const tool = payload.tool_name;
-  const input = payload.tool_input || {};
-  switch (tool) {
-    case 'Edit':  return `Edit ${path.basename(input.file_path || '')}`;
-    case 'Write': return `Write ${path.basename(input.file_path || '')}`;
-    case 'Read':  return `Read ${path.basename(input.file_path || '')}`;
-    case 'Bash':  return `Bash: ${(input.command || '').slice(0, 50)}`;
-    case 'Grep':  return `Grep "${(input.pattern || '').slice(0, 30)}"`;
-    case 'Glob':  return `Glob ${input.pattern || ''}`;
-    default:      return tool;
-  }
-}
-
 function ensureHooks() {
   if (!fs.existsSync(HOOKS_DIR)) fs.mkdirSync(HOOKS_DIR, { recursive: true });
   fs.copyFileSync(HOOK_CLIENT_SRC, HOOK_CLIENT_DST);
   if (fs.existsSync(NOTIFIER_SRC)) fs.copyFileSync(NOTIFIER_SRC, NOTIFIER_DST);
 
-  let settings = {};
-  try {
-    if (fs.existsSync(SETTINGS_PATH)) {
-      settings = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf-8'));
-    }
-  } catch { /* corrupted, start fresh */ }
-
-  const hookCmd = `node ${HOOK_CLIENT_DST}`;
-
-  if (!settings.hooks) settings.hooks = {};
-
-  for (const eventName of ['SessionStart', 'PostToolUse', 'Stop', 'Notification']) {
-    if (!settings.hooks[eventName]) settings.hooks[eventName] = [];
-
-    const exists = settings.hooks[eventName].some(
-      group => (group.hooks || []).some(h => h.command && h.command.includes('claude-code-fleet'))
-    );
-    if (!exists) {
-      settings.hooks[eventName].push({
-        hooks: [{ type: 'command', command: hookCmd }]
-      });
-    }
+  const adaptersSrc = path.join(__dirname, 'adapters');
+  const adaptersDst = path.join(HOOKS_DIR, 'adapters');
+  if (!fs.existsSync(adaptersDst)) fs.mkdirSync(adaptersDst, { recursive: true });
+  for (const file of ['base.js', 'claude.js', 'codex.js', 'registry.js', 'index.js']) {
+    const src = path.join(adaptersSrc, file);
+    if (fs.existsSync(src)) fs.copyFileSync(src, path.join(adaptersDst, file));
   }
 
-  const tmpPath = SETTINGS_PATH + '.fleet-tmp';
-  fs.writeFileSync(tmpPath, JSON.stringify(settings, null, 2) + '\n');
-  fs.renameSync(tmpPath, SETTINGS_PATH);
+  const installedAdapters = registry.installed();
+  for (const adapter of installedAdapters) {
+    adapter.installHooks(HOOK_CLIENT_DST);
+  }
 }
 
 function removeHooks() {
-  if (!fs.existsSync(SETTINGS_PATH)) return;
-
-  let settings = {};
-  try {
-    settings = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf-8'));
-  } catch { return; }
-
-  if (!settings.hooks) return;
-
-  for (const eventName of Object.keys(settings.hooks)) {
-    settings.hooks[eventName] = settings.hooks[eventName].filter(group => {
-      if ((group.hooks || []).some(h => h.command && h.command.includes('claude-code-fleet'))) {
-        return false;
-      }
-      if (group.command && group.command.includes('claude-code-fleet')) {
-        return false;
-      }
-      return true;
-    });
-    if (settings.hooks[eventName].length === 0) delete settings.hooks[eventName];
+  for (const adapter of registry.all()) {
+    adapter.removeHooks();
   }
-  if (Object.keys(settings.hooks).length === 0) delete settings.hooks;
-
-  const tmpPath = SETTINGS_PATH + '.fleet-tmp';
-  fs.writeFileSync(tmpPath, JSON.stringify(settings, null, 2) + '\n');
-  fs.renameSync(tmpPath, SETTINGS_PATH);
 }
 
 module.exports = { Master, ensureHooks, removeHooks };

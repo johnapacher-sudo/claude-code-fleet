@@ -6,6 +6,7 @@ const fs = require('fs');
 const readline = require('readline');
 const os = require('os');
 const { Master } = require('./master');
+const { registry } = require('./adapters');
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -49,10 +50,11 @@ function modelWarning(m) {
 }
 
 function modelItem(m) {
+  const toolTag = m.tool && m.tool !== 'claude' ? `[${m.tool.charAt(0).toUpperCase() + m.tool.slice(1)}] ` : '';
   return {
-    display: `${m.name || '(unnamed)'} (${m.model || 'default'})`,
+    display: `${m.name || '(unnamed)'} (${toolTag}${m.model || 'default'})`,
     label: m.name || '(unnamed)',
-    detail: m.model || 'default',
+    detail: `${toolTag}${m.model || 'default'}`,
     meta: modelMeta(m),
     warning: modelWarning(m),
     value: m.name,
@@ -88,9 +90,15 @@ function applyProxy(env, proxyUrl) {
 
 // ─── Dependency checks ───────────────────────────────────────────────────────
 
-function checkDeps() {
-  if (!run('which', ['claude'])) {
-    console.error(ANSI.red('Missing dependency: claude (Claude Code CLI)'));
+function checkToolDeps(toolName) {
+  const adapter = registry.get(toolName || 'claude');
+  if (!adapter) {
+    console.error(ANSI.red(`Unknown tool: ${toolName}`));
+    console.error(`Available tools: ${registry.all().map(a => a.name).join(', ')}`);
+    process.exit(1);
+  }
+  if (!adapter.isInstalled()) {
+    console.error(ANSI.red(`Missing dependency: ${adapter.binary} (${adapter.displayName})`));
     process.exit(1);
   }
 }
@@ -439,8 +447,6 @@ async function cmdModelDelete() {
 // ─── Run command ─────────────────────────────────────────────────────────────
 
 async function cmdRun(modelName, cwd, proxyOpt) {
-  checkDeps();
-
   const data = loadModels();
   if (data.models.length === 0) {
     console.error(ANSI.yellow('No model profiles configured.'));
@@ -463,29 +469,24 @@ async function cmdRun(modelName, cwd, proxyOpt) {
     entry = data.models.find(m => m.name === selected);
   }
 
+  const toolName = entry.tool || 'claude';
+  checkToolDeps(toolName);
+  const adapter = registry.get(toolName);
+
   const workDir = cwd ? path.resolve(cwd) : process.cwd();
   if (!fs.existsSync(workDir)) fs.mkdirSync(workDir, { recursive: true });
 
-  // Build settings override — all config through claude's own mechanism
-  const settingsEnv = {};
-  if (entry.apiKey) {
-    settingsEnv.ANTHROPIC_AUTH_TOKEN = entry.apiKey;
-    settingsEnv.ANTHROPIC_API_KEY = '';
-  }
-  if (entry.apiBaseUrl) settingsEnv.ANTHROPIC_BASE_URL = entry.apiBaseUrl;
-
-  const claudeArgs = ['--dangerously-skip-permissions'];
-  if (entry.model) claudeArgs.push('--model', entry.model);
-  claudeArgs.push('--settings', JSON.stringify({ env: settingsEnv }));
+  const args = adapter.buildArgs(entry);
 
   const proxyUrl = resolveProxy(proxyOpt, entry.proxy);
   const proxyInfo = proxyUrl ? `  proxy: ${proxyUrl}` : '';
-  console.log(ANSI.dim(`\n  Launching claude with model: ${entry.model || 'default'} (${entry.name})${proxyInfo}\n`));
+  console.log(ANSI.dim(`\n  Launching ${adapter.displayName} with model: ${entry.model || 'default'} (${entry.name})${proxyInfo}\n`));
 
-  const env = { ...process.env, FLEET_MODEL_NAME: entry.name };
-  applyProxy(env, proxyUrl);
+  const baseEnv = { ...process.env };
+  applyProxy(baseEnv, proxyUrl);
+  const env = adapter.buildEnv(entry, baseEnv);
 
-  const child = spawn('claude', claudeArgs, {
+  const child = spawn(adapter.binary, args, {
     cwd: workDir,
     stdio: 'inherit',
     env,
@@ -540,7 +541,6 @@ function filterInstances(instances, onlyNames) {
 // ─── Fleet commands ──────────────────────────────────────────────────────────
 
 function cmdUp(config, onlyNames) {
-  checkDeps();
   cleanupState();
 
   const state = loadState();
@@ -552,28 +552,21 @@ function cmdUp(config, onlyNames) {
       continue;
     }
 
+    const toolName = inst.tool || 'claude';
+    checkToolDeps(toolName);
+    const adapter = registry.get(toolName);
+
     const cwd = inst.cwd ? path.resolve(inst.cwd) : process.cwd();
     if (!fs.existsSync(cwd)) fs.mkdirSync(cwd, { recursive: true });
 
-    const env = { ...process.env };
-    if (inst.env) Object.assign(env, inst.env);
-    applyProxy(env, inst.proxy);
+    const baseEnv = { ...process.env };
+    if (inst.env) Object.assign(baseEnv, inst.env);
+    applyProxy(baseEnv, inst.proxy);
+    const env = adapter.buildEnv(inst, baseEnv);
 
-    const claudeSettingsEnv = {};
-    if (inst.apiKey) {
-      claudeSettingsEnv.ANTHROPIC_AUTH_TOKEN = inst.apiKey;
-      claudeSettingsEnv.ANTHROPIC_API_KEY = '';
-    }
-    if (inst.apiBaseUrl) claudeSettingsEnv.ANTHROPIC_BASE_URL = inst.apiBaseUrl;
+    const args = adapter.buildArgs(inst);
 
-    const claudeArgs = ['--dangerously-skip-permissions'];
-    if (inst.model) claudeArgs.push('--model', inst.model);
-    if (inst.args) claudeArgs.push(...inst.args);
-    if (Object.keys(claudeSettingsEnv).length > 0) {
-      claudeArgs.push('--settings', JSON.stringify({ env: claudeSettingsEnv }));
-    }
-
-    const child = spawn('claude', claudeArgs, {
+    const child = spawn(adapter.binary, args, {
       cwd,
       env,
       stdio: 'ignore',
@@ -583,6 +576,7 @@ function cmdUp(config, onlyNames) {
 
     state.instances[inst.name] = {
       pid: child.pid,
+      tool: toolName,
       model: inst.model || 'default',
       cwd,
       startedAt: new Date().toISOString(),
@@ -989,7 +983,7 @@ if (require.main === module) main();
 
 module.exports = {
   stripAnsi, truncStr, modelMeta, modelWarning, modelItem,
-  run, checkDeps, normalizeProxyUrl, resolveProxy, applyProxy,
+  run, checkToolDeps, normalizeProxyUrl, resolveProxy, applyProxy,
   loadState, saveState, isProcessAlive, cleanupState,
   configSearchPaths, findConfigFile, loadConfig, validateConfig,
   getModelsPath, loadModels, saveModels,
