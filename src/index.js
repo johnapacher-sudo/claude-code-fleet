@@ -4,15 +4,11 @@ const { spawnSync, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const readline = require('readline');
-const os = require('os');
-const { Master } = require('./master');
+const { registry } = require('./adapters');
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const CONFIG_FILENAME = 'fleet.config.json';
-const LOCAL_CONFIG_FILENAME = 'fleet.config.local.json';
 const GLOBAL_CONFIG_DIR = path.join(process.env.HOME || '~', '.config', 'claude-code-fleet');
-const STATE_FILE = path.join(GLOBAL_CONFIG_DIR, 'fleet-state.json');
 
 const ANSI = {
   bold: s => `\x1b[1m${s}\x1b[0m`,
@@ -49,10 +45,11 @@ function modelWarning(m) {
 }
 
 function modelItem(m) {
+  const toolTag = m.tool && m.tool !== 'claude' ? `[${m.tool.charAt(0).toUpperCase() + m.tool.slice(1)}] ` : '';
   return {
-    display: `${m.name || '(unnamed)'} (${m.model || 'default'})`,
+    display: `${m.name || '(unnamed)'} (${toolTag}${m.model || 'default'})`,
     label: m.name || '(unnamed)',
-    detail: m.model || 'default',
+    detail: `${toolTag}${m.model || 'default'}`,
     meta: modelMeta(m),
     warning: modelWarning(m),
     value: m.name,
@@ -88,125 +85,17 @@ function applyProxy(env, proxyUrl) {
 
 // ─── Dependency checks ───────────────────────────────────────────────────────
 
-function checkDeps() {
-  if (!run('which', ['claude'])) {
-    console.error(ANSI.red('Missing dependency: claude (Claude Code CLI)'));
+function checkToolDeps(toolName) {
+  const adapter = registry.get(toolName || 'claude');
+  if (!adapter) {
+    console.error(ANSI.red(`Unknown tool: ${toolName}`));
+    console.error(`Available tools: ${registry.all().map(a => a.name).join(', ')}`);
     process.exit(1);
   }
-}
-
-// ─── Fleet state (PID tracking) ─────────────────────────────────────────────
-
-function loadState() {
-  if (!fs.existsSync(STATE_FILE)) return { instances: {} };
-  try {
-    return JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8'));
-  } catch {
-    return { instances: {} };
-  }
-}
-
-function saveState(state) {
-  const dir = path.dirname(STATE_FILE);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2) + '\n');
-}
-
-function isProcessAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function cleanupState() {
-  const state = loadState();
-  let changed = false;
-  for (const name of Object.keys(state.instances)) {
-    const pid = state.instances[name].pid;
-    if (!isProcessAlive(pid)) {
-      delete state.instances[name];
-      changed = true;
-    }
-  }
-  if (changed) saveState(state);
-}
-
-// ─── Config ──────────────────────────────────────────────────────────────────
-
-function configSearchPaths() {
-  return [
-    path.join(process.cwd(), LOCAL_CONFIG_FILENAME),
-    path.join(process.cwd(), CONFIG_FILENAME),
-    path.join(GLOBAL_CONFIG_DIR, 'config.json'),
-  ];
-}
-
-function findConfigFile(cliPath) {
-  if (cliPath) {
-    const resolved = path.resolve(cliPath);
-    if (!fs.existsSync(resolved)) {
-      console.error(ANSI.red(`Config not found: ${resolved}`));
-      process.exit(1);
-    }
-    return resolved;
-  }
-  for (const p of configSearchPaths()) {
-    if (fs.existsSync(p)) return p;
-  }
-  return null;
-}
-
-function loadConfig(cliPath) {
-  const file = findConfigFile(cliPath);
-  if (!file) {
-    console.error(ANSI.red('No config file found. Searched:'));
-    configSearchPaths().forEach(p => console.error(`  - ${p}`));
-    console.error(`\nRun ${ANSI.bold('fleet init')} to create one, or copy fleet.config.example.json.`);
+  if (!adapter.isInstalled()) {
+    console.error(ANSI.red(`Missing dependency: ${adapter.binary} (${adapter.displayName})`));
     process.exit(1);
   }
-
-  let raw;
-  try {
-    raw = JSON.parse(fs.readFileSync(file, 'utf-8'));
-  } catch (e) {
-    console.error(ANSI.red(`Invalid JSON in ${file}: ${e.message}`));
-    process.exit(1);
-  }
-
-  const errors = validateConfig(raw);
-  if (errors.length > 0) {
-    console.error(ANSI.red(`Config errors in ${file}:`));
-    errors.forEach(e => console.error(`  - ${e}`));
-    process.exit(1);
-  }
-
-  return { file, ...raw };
-}
-
-function validateConfig(config) {
-  const errors = [];
-  if (!Array.isArray(config.instances) || config.instances.length === 0) {
-    errors.push('`instances` must be a non-empty array');
-    return errors;
-  }
-  const names = new Set();
-  config.instances.forEach((inst, i) => {
-    const prefix = `instances[${i}]`;
-    if (!inst.name || typeof inst.name !== 'string') {
-      errors.push(`${prefix}: "name" is required`);
-    } else if (names.has(inst.name)) {
-      errors.push(`${prefix}: duplicate name "${inst.name}"`);
-    } else {
-      names.add(inst.name);
-    }
-    if (!inst.apiKey || typeof inst.apiKey !== 'string') {
-      errors.push(`${prefix}: "apiKey" is required`);
-    }
-  });
-  return errors;
 }
 
 // ─── Model profiles ──────────────────────────────────────────────────────────
@@ -261,19 +150,41 @@ async function selectFromList(items, label, dangerMode = false) {
 
 // ─── Model commands ──────────────────────────────────────────────────────────
 
-async function cmdModelAdd() {
+async function cmdModelAdd(toolName) {
+  if (!toolName) {
+    const toolItems = registry.all().map(a => ({
+      label: a.displayName,
+      detail: a.binary,
+      value: a.name,
+    }));
+    toolName = await selectFromList(toolItems, 'Select a tool type');
+    if (!toolName) return;
+  }
+
+  const adapter = registry.get(toolName);
+  if (!adapter) {
+    console.error(ANSI.red(`Unknown tool: ${toolName}`));
+    process.exit(1);
+  }
+
+  const placeholders = {
+    modelId: toolName === 'codex' ? 'e.g. gpt-5.4' : 'e.g. claude-opus-4-6',
+    apiKey: toolName === 'codex' ? 'sk-...' : 'sk-ant-...',
+    apiBaseUrl: toolName === 'codex' ? 'https://api.openai.com/v1' : 'https://api.anthropic.com',
+  };
+
   const selectorPath = path.join(__dirname, 'components', 'selector.mjs');
   const inputMod = await import(selectorPath);
   const allRequired = ['Name', 'Model ID', 'API Key', 'API Base URL'];
 
   while (true) {
     const created = await inputMod.renderInput({
-      title: 'Add a new model profile',
+      title: `Add a new ${adapter.displayName} model profile`,
       fields: [
         { label: 'Name', value: '', placeholder: 'e.g. opus-prod' },
-        { label: 'Model ID', value: '', placeholder: 'e.g. claude-opus-4-6' },
-        { label: 'API Key', value: '', placeholder: 'sk-ant-...' },
-        { label: 'API Base URL', value: '', placeholder: 'https://api.anthropic.com' },
+        { label: 'Model ID', value: '', placeholder: placeholders.modelId },
+        { label: 'API Key', value: '', placeholder: placeholders.apiKey },
+        { label: 'API Base URL', value: '', placeholder: placeholders.apiBaseUrl },
         { label: 'Proxy URL', value: '', placeholder: 'http://127.0.0.1:7890 (optional)' },
       ],
       requiredFields: allRequired,
@@ -281,7 +192,6 @@ async function cmdModelAdd() {
 
     if (!created) return; // cancelled
 
-    // Show confirmation
     const key = truncStr(created['API Key'], 12) + '...';
     const endpoint = truncStr(created['API Base URL'], 32);
     const proxyDisplay = created['Proxy URL'] ? ` \u00B7 proxy: ${truncStr(created['Proxy URL'], 32)}` : '';
@@ -305,6 +215,7 @@ async function cmdModelAdd() {
 
     data.models.push({
       name: created.Name,
+      tool: toolName,
       model: created['Model ID'] || undefined,
       apiKey: created['API Key'] || undefined,
       apiBaseUrl: created['API Base URL'] || undefined,
@@ -439,8 +350,6 @@ async function cmdModelDelete() {
 // ─── Run command ─────────────────────────────────────────────────────────────
 
 async function cmdRun(modelName, cwd, proxyOpt) {
-  checkDeps();
-
   const data = loadModels();
   if (data.models.length === 0) {
     console.error(ANSI.yellow('No model profiles configured.'));
@@ -463,29 +372,24 @@ async function cmdRun(modelName, cwd, proxyOpt) {
     entry = data.models.find(m => m.name === selected);
   }
 
+  const toolName = entry.tool || 'claude';
+  checkToolDeps(toolName);
+  const adapter = registry.get(toolName);
+
   const workDir = cwd ? path.resolve(cwd) : process.cwd();
   if (!fs.existsSync(workDir)) fs.mkdirSync(workDir, { recursive: true });
 
-  // Build settings override — all config through claude's own mechanism
-  const settingsEnv = {};
-  if (entry.apiKey) {
-    settingsEnv.ANTHROPIC_AUTH_TOKEN = entry.apiKey;
-    settingsEnv.ANTHROPIC_API_KEY = '';
-  }
-  if (entry.apiBaseUrl) settingsEnv.ANTHROPIC_BASE_URL = entry.apiBaseUrl;
-
-  const claudeArgs = ['--dangerously-skip-permissions'];
-  if (entry.model) claudeArgs.push('--model', entry.model);
-  claudeArgs.push('--settings', JSON.stringify({ env: settingsEnv }));
+  const args = adapter.buildArgs(entry);
 
   const proxyUrl = resolveProxy(proxyOpt, entry.proxy);
   const proxyInfo = proxyUrl ? `  proxy: ${proxyUrl}` : '';
-  console.log(ANSI.dim(`\n  Launching claude with model: ${entry.model || 'default'} (${entry.name})${proxyInfo}\n`));
+  console.log(ANSI.dim(`\n  Launching ${adapter.displayName} with model: ${entry.model || 'default'} (${entry.name})${proxyInfo}\n`));
 
-  const env = { ...process.env, FLEET_MODEL_NAME: entry.name };
-  applyProxy(env, proxyUrl);
+  const baseEnv = { ...process.env };
+  applyProxy(baseEnv, proxyUrl);
+  const env = adapter.buildEnv(entry, baseEnv);
 
-  const child = spawn('claude', claudeArgs, {
+  const child = spawn(adapter.binary, args, {
     cwd: workDir,
     stdio: 'inherit',
     env,
@@ -493,175 +397,68 @@ async function cmdRun(modelName, cwd, proxyOpt) {
   child.on('exit', code => process.exit(code || 0));
 }
 
-// ─── Config init ─────────────────────────────────────────────────────────────
-
-function cmdInit() {
-  const target = path.join(process.cwd(), CONFIG_FILENAME);
-  if (fs.existsSync(target)) {
-    console.error(ANSI.yellow(`${CONFIG_FILENAME} already exists.`));
-    process.exit(1);
-  }
-
-  const example = path.join(__dirname, '..', 'fleet.config.example.json');
-  const template = fs.existsSync(example)
-    ? fs.readFileSync(example, 'utf-8')
-    : JSON.stringify({
-        instances: [
-          {
-            name: 'worker-1',
-            apiKey: 'your-api-key-here',
-            model: 'claude-sonnet-4-6',
-          },
-        ],
-      }, null, 2) + '\n';
-
-  fs.writeFileSync(target, template);
-  console.log(ANSI.green(`Created ${target}`));
-  console.log('Edit it with your API keys and model preferences.');
-}
-
-// ─── Instance filtering ──────────────────────────────────────────────────────
-
-function filterInstances(instances, onlyNames) {
-  if (!onlyNames || onlyNames.length === 0) return instances;
-  const nameSet = new Set(onlyNames);
-  const filtered = instances.filter(i => nameSet.has(i.name));
-  const missing = [...nameSet].filter(n => !instances.some(i => i.name === n));
-  if (missing.length > 0) {
-    console.error(ANSI.yellow(`Warning: unknown instances: ${missing.join(', ')}`));
-  }
-  if (filtered.length === 0) {
-    console.error(ANSI.red('No matching instances found.'));
-    process.exit(1);
-  }
-  return filtered;
-}
-
-// ─── Fleet commands ──────────────────────────────────────────────────────────
-
-function cmdUp(config, onlyNames) {
-  checkDeps();
-  cleanupState();
-
-  const state = loadState();
-  const instances = filterInstances(config.instances, onlyNames);
-
-  for (const inst of instances) {
-    if (state.instances[inst.name] && isProcessAlive(state.instances[inst.name].pid)) {
-      console.log(ANSI.yellow(`  [${inst.name}] already running (pid ${state.instances[inst.name].pid})`));
-      continue;
+function cmdHooksInstall(toolsFilter) {
+  if (toolsFilter) {
+    const toolNames = toolsFilter.split(',');
+    const HOOKS_DIR = path.join(GLOBAL_CONFIG_DIR, 'hooks');
+    const HOOK_CLIENT_DST = path.join(HOOKS_DIR, 'hook-client.js');
+    if (!fs.existsSync(HOOKS_DIR)) fs.mkdirSync(HOOKS_DIR, { recursive: true });
+    fs.copyFileSync(path.join(__dirname, 'hook-client.js'), HOOK_CLIENT_DST);
+    const adaptersSrc = path.join(__dirname, 'adapters');
+    const adaptersDst = path.join(HOOKS_DIR, 'adapters');
+    if (!fs.existsSync(adaptersDst)) fs.mkdirSync(adaptersDst, { recursive: true });
+    for (const file of ['base.js', 'claude.js', 'codex.js', 'registry.js', 'index.js']) {
+      const src = path.join(adaptersSrc, file);
+      if (fs.existsSync(src)) fs.copyFileSync(src, path.join(adaptersDst, file));
     }
-
-    const cwd = inst.cwd ? path.resolve(inst.cwd) : process.cwd();
-    if (!fs.existsSync(cwd)) fs.mkdirSync(cwd, { recursive: true });
-
-    const env = { ...process.env };
-    if (inst.env) Object.assign(env, inst.env);
-    applyProxy(env, inst.proxy);
-
-    const claudeSettingsEnv = {};
-    if (inst.apiKey) {
-      claudeSettingsEnv.ANTHROPIC_AUTH_TOKEN = inst.apiKey;
-      claudeSettingsEnv.ANTHROPIC_API_KEY = '';
+    for (const t of toolNames) {
+      const adapter = registry.get(t.trim());
+      if (!adapter) {
+        console.error(ANSI.red(`Unknown tool: ${t.trim()}`));
+        continue;
+      }
+      if (!adapter.isInstalled()) {
+        console.error(ANSI.yellow(`${adapter.displayName} not installed, skipping.`));
+        continue;
+      }
+      adapter.installHooks(HOOK_CLIENT_DST);
+      console.log(ANSI.green(`Fleet hooks installed for ${adapter.displayName}`));
     }
-    if (inst.apiBaseUrl) claudeSettingsEnv.ANTHROPIC_BASE_URL = inst.apiBaseUrl;
-
-    const claudeArgs = ['--dangerously-skip-permissions'];
-    if (inst.model) claudeArgs.push('--model', inst.model);
-    if (inst.args) claudeArgs.push(...inst.args);
-    if (Object.keys(claudeSettingsEnv).length > 0) {
-      claudeArgs.push('--settings', JSON.stringify({ env: claudeSettingsEnv }));
-    }
-
-    const child = spawn('claude', claudeArgs, {
-      cwd,
-      env,
-      stdio: 'ignore',
-      detached: true,
-    });
-    child.unref();
-
-    state.instances[inst.name] = {
-      pid: child.pid,
-      model: inst.model || 'default',
-      cwd,
-      startedAt: new Date().toISOString(),
-    };
-
-    const proxyTag = inst.proxy ? ` proxy=${inst.proxy}` : '';
-    console.log(ANSI.green(`  [${inst.name}]`) + ` model=${ANSI.cyan(inst.model || 'default')} pid=${child.pid}${proxyTag}`);
+  } else {
+    const { ensureHooks } = require('./master');
+    ensureHooks();
+    const installedNames = registry.installed().map(a => a.displayName).join(', ');
+    console.log(ANSI.green(`Fleet hooks installed for: ${installedNames || 'none (no tools detected)'}`));
   }
-
-  saveState(state);
-  console.log(`\nFleet launched with ${instances.length} instance(s).`);
-  console.log(ANSI.dim('  fleet ls       # List running instances'));
-  console.log(ANSI.dim('  fleet down     # Stop all instances'));
-}
-
-function cmdDown() {
-  cleanupState();
-  const state = loadState();
-  const names = Object.keys(state.instances);
-  if (names.length === 0) {
-    console.log(ANSI.yellow('No running instances.'));
-    return;
-  }
-
-  for (const name of names) {
-    const pid = state.instances[name].pid;
-    try {
-      process.kill(pid, 'SIGTERM');
-      console.log(ANSI.green(`  [${name}] stopped (pid ${pid})`));
-    } catch {
-      console.log(ANSI.yellow(`  [${name}] already exited`));
-    }
-  }
-
-  state.instances = {};
-  saveState(state);
-  console.log('\nFleet stopped.');
-}
-
-function cmdHooksInstall() {
-  const { ensureHooks } = require('./master');
-  ensureHooks();
-  console.log(ANSI.green('Fleet hooks installed to ~/.claude/settings.json'));
 }
 
 function cmdHooksRemove() {
   const { removeHooks } = require('./master');
   removeHooks();
-  console.log(ANSI.green('Fleet hooks removed from ~/.claude/settings.json'));
+  const allNames = registry.all().map(a => a.displayName).join(', ');
+  console.log(ANSI.green(`Fleet hooks removed for: ${allNames}`));
 }
 
 function cmdHooksStatus() {
-  const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
-  if (!fs.existsSync(settingsPath)) {
-    console.log(ANSI.yellow('No ~/.claude/settings.json found'));
-    return;
-  }
-  let settings = {};
-  try {
-    settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-  } catch {
-    console.log(ANSI.red('Cannot parse ~/.claude/settings.json'));
-    return;
-  }
-
-  const events = ['SessionStart', 'PostToolUse', 'Stop', 'Notification'];
   console.log(ANSI.bold('\nFleet Hooks Status:\n'));
-  for (const evt of events) {
-    const groups = (settings.hooks && settings.hooks[evt]) || [];
-    const fleetCount = groups.filter(
-      g => (g.hooks || []).some(h => h.command && h.command.includes('claude-code-fleet'))
-    ).length;
-    if (fleetCount > 0) {
-      console.log(`  ${ANSI.green('✓')} ${evt}: ${fleetCount} fleet hook(s)`);
+
+  for (const adapter of registry.all()) {
+    const isInst = adapter.isInstalled();
+    const hookOk = typeof adapter.isHookInstalled === 'function' ? adapter.isHookInstalled() : false;
+
+    console.log(`  ${ANSI.bold(adapter.displayName)} (${adapter.binary}):`);
+    if (!isInst) {
+      console.log(`    ${ANSI.yellow('\u26A0')} CLI not installed`);
+    } else if (hookOk) {
+      console.log(`    ${ANSI.green('\u2713')} Hooks installed`);
+      for (const evt of adapter.hookEvents) {
+        console.log(`      ${ANSI.green('\u2713')} ${evt}`);
+      }
     } else {
-      console.log(`  ${ANSI.red('✗')} ${evt}: not installed`);
+      console.log(`    ${ANSI.red('\u2717')} Hooks not installed`);
     }
+    console.log();
   }
-  console.log();
 }
 
 // ─── Notify commands ──────────────────────────────────────────────────────
@@ -730,45 +527,6 @@ function cmdNotify(opts) {
   console.log();
 }
 
-function cmdRestart(config, onlyNames) {
-  cmdDown();
-  cmdUp(config, onlyNames);
-}
-
-function cmdLs() {
-  cleanupState();
-  const state = loadState();
-  const names = Object.keys(state.instances);
-  if (names.length === 0) {
-    console.log(ANSI.yellow('No running instances.'));
-    return;
-  }
-
-  console.log(ANSI.bold('\nRunning instances:\n'));
-  for (const name of names) {
-    const inst = state.instances[name];
-    console.log(`  ${ANSI.green(name)}  model=${ANSI.cyan(inst.model)}  pid=${inst.pid}`);
-  }
-}
-
-function cmdStatus(config) {
-  console.log(`${ANSI.bold('Instance Configs:')}\n`);
-  for (const inst of config.instances) {
-    const cwd = inst.cwd ? path.resolve(inst.cwd) : process.cwd();
-    console.log(`  ${ANSI.green(inst.name)}`);
-    console.log(`    model:    ${ANSI.cyan(inst.model || 'default')}`);
-    console.log(`    endpoint: ${inst.apiBaseUrl || 'https://api.anthropic.com'}`);
-    console.log(`    cwd:      ${cwd}`);
-    if (inst.proxy) {
-      console.log(`    proxy:    ${inst.proxy}`);
-    }
-    if (inst.env && Object.keys(inst.env).length > 0) {
-      console.log(`    env:      ${Object.keys(inst.env).join(', ')}`);
-    }
-    console.log();
-  }
-}
-
 // ─── Master commands ─────────────────────────────────────────────────────
 
 async function cmdStart() {
@@ -785,11 +543,7 @@ function parseArgs(argv) {
   let i = 0;
   while (i < argv.length) {
     const arg = argv[i];
-    if (arg === '--config' && argv[i + 1]) {
-      opts.config = argv[++i];
-    } else if (arg === '--only' && argv[i + 1]) {
-      opts.only = argv[++i].split(',');
-    } else if (arg === '--model' && argv[i + 1]) {
+    if (arg === '--model' && argv[i + 1]) {
       opts.model = argv[++i];
     } else if (arg === '--cwd' && argv[i + 1]) {
       opts.cwd = argv[++i];
@@ -802,6 +556,8 @@ function parseArgs(argv) {
       } else {
         opts.proxy = true;
       }
+    } else if (arg === '--tools' && argv[i + 1]) {
+      opts.tools = argv[++i];
     } else if (arg === '--version' || arg === '-v' || arg === '-V') {
       opts.version = true;
     } else if (arg === '--help' || arg === '-h') {
@@ -823,46 +579,45 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-  console.log(`${ANSI.bold('Claude Code Fleet')} — Observe multiple Claude Code processes
+  console.log(`${ANSI.bold('Claude Code Fleet')} — Manage multiple AI coding tool processes
 
 ${ANSI.bold('Usage:')}
   fleet [command] [options]
 
 ${ANSI.bold('Commands:')}
-  run                 Start Claude Code with a model profile
+  run                 Start a tool with a model profile
   start               Start fleet observer (TUI dashboard)
-  hooks install       Install fleet hooks to ~/.claude/settings.json
-  hooks remove        Remove fleet hooks from ~/.claude/settings.json
-  hooks status        Show current hook installation status
-  model add           Add a new model profile
+  hooks install       Install fleet hooks for all detected tools
+  hooks remove        Remove fleet hooks for all tools
+  hooks status        Show current hook installation status per tool
+  model add [tool]    Add a new model profile (claude, codex)
   model list          List all model profiles
   model edit          Edit a model profile (interactive)
   model delete        Delete a model profile (interactive)
-  up                  Start instances from config (background)
-  down                Stop all background instances
-  restart             Restart instances
-  ls                  List running instances
-  status              Show instance configuration details
-  init                Create a fleet.config.json from template
   notify              Configure desktop notifications
 
+${ANSI.bold('Supported Tools:')}
+  claude              Claude Code (anthropic)
+  codex               Codex CLI (openai)
+
 ${ANSI.bold('Options:')}
-  --config <path>   Use specific config file
-  --only <names>    Comma-separated instance names to target
   --model <name>    Model profile name (for run command)
   --cwd <path>      Working directory (for run command)
   --proxy [url]     Enable HTTP proxy (uses profile proxy if url omitted)
+  --tools <names>   Comma-separated tool names (for hooks install)
   -v, --version     Show version number
   -h, --help        Show this help
 
 ${ANSI.bold('Examples:')}
   fleet start                       # Start observer dashboard
-  fleet run --model opus-prod       # Start Claude Code with a model profile
+  fleet run --model opus-prod       # Start with a model profile
   fleet run --proxy                 # Enable proxy using profile's saved proxy URL
   fleet run --proxy http://127.0.0.1:7890  # Enable proxy with explicit URL
   fleet hooks status                # Check hook installation status
+  fleet hooks install --tools codex # Install hooks for Codex only
+  fleet model add claude            # Add a Claude model profile
+  fleet model add codex             # Add a Codex model profile
   fleet model add                   # Add a model profile interactively
-  fleet up                          # Start all instances (background)
   fleet notify                      # Show notification config
   fleet notify --on                 # Enable notifications
   fleet notify --no-sound           # Disable notification sound
@@ -884,17 +639,12 @@ function main() {
     process.exit(0);
   }
 
-  if (command === 'init') {
-    cmdInit();
-    return;
-  }
-
-  // Model management commands (don't need fleet config)
+  // Model management commands
   if (command === 'model') {
     const modelCmd = subcommand || 'list';
     switch (modelCmd) {
       case 'add':
-        cmdModelAdd();
+        cmdModelAdd(args[0]);
         break;
       case 'list':
       case 'ls':
@@ -915,13 +665,13 @@ function main() {
     return;
   }
 
-  // Run command (doesn't need fleet config)
+  // Run command
   if (command === 'run') {
     cmdRun(opts.model, opts.cwd, opts.proxy);
     return;
   }
 
-  // Observer start (doesn't need fleet config)
+  // Observer start
   if (command === 'start') {
     cmdStart().catch(err => {
       console.error(ANSI.red(`Fatal: ${err.message}`));
@@ -930,12 +680,12 @@ function main() {
     return;
   }
 
-  // Hooks management (doesn't need fleet config)
+  // Hooks management
   if (command === 'hooks') {
     const hooksCmd = subcommand || 'status';
     switch (hooksCmd) {
       case 'install':
-        cmdHooksInstall();
+        cmdHooksInstall(opts.tools);
         break;
       case 'remove':
         cmdHooksRemove();
@@ -951,51 +701,25 @@ function main() {
     return;
   }
 
-  // Notify configuration (doesn't need fleet config)
+  // Notify configuration
   if (command === 'notify') {
     cmdNotify(opts);
     return;
   }
 
-  // Remaining commands need fleet config
-  const config = loadConfig(opts.config);
-
-  switch (command) {
-    case 'up':
-      cmdUp(config, opts.only);
-      break;
-    case 'down':
-    case 'stop':
-      cmdDown();
-      break;
-    case 'restart':
-      cmdRestart(config, opts.only);
-      break;
-    case 'ls':
-    case 'list':
-      cmdLs();
-      break;
-    case 'status':
-      cmdStatus(config);
-      break;
-    default:
-      console.error(ANSI.red(`Unknown command: ${command}`));
-      printHelp();
-      process.exit(1);
-  }
+  console.error(ANSI.red(`Unknown command: ${command}`));
+  printHelp();
+  process.exit(1);
 }
 
 if (require.main === module) main();
 
 module.exports = {
   stripAnsi, truncStr, modelMeta, modelWarning, modelItem,
-  run, checkDeps, normalizeProxyUrl, resolveProxy, applyProxy,
-  loadState, saveState, isProcessAlive, cleanupState,
-  configSearchPaths, findConfigFile, loadConfig, validateConfig,
+  run, checkToolDeps, normalizeProxyUrl, resolveProxy, applyProxy,
   getModelsPath, loadModels, saveModels,
-  cmdModelList, cmdInit, cmdHooksStatus, cmdLs, cmdStatus, cmdDown,
+  cmdModelList, cmdHooksStatus,
   cmdHooksInstall, cmdHooksRemove,
   getNotifyConfigPath, loadNotifyConfigFile, saveNotifyConfig, cmdNotify,
-  filterInstances,
-  parseArgs, main, ANSI, CONFIG_FILENAME, GLOBAL_CONFIG_DIR, STATE_FILE,
+  parseArgs, main, ANSI, GLOBAL_CONFIG_DIR,
 };

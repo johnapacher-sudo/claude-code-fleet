@@ -143,7 +143,7 @@ function App({ master }) {
       workers.length === 0
         ? h(Box, { paddingX: 1 },
             h(Text, { color: colors.idle },
-              'No active workers. Start claude processes to see them here.',
+              'No active workers. Start Claude or Codex processes to see them here.',
             ),
           )
         : workers.map((w, i) =>

@@ -5,7 +5,6 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-// Notification module (optional — graceful degradation)
 let notifier;
 try {
   notifier = require('./notifier');
@@ -17,7 +16,25 @@ const CONFIG_DIR = path.join(os.homedir(), '.config', 'claude-code-fleet');
 const SOCK_PATH = path.join(CONFIG_DIR, 'fleet.sock');
 const SESSIONS_DIR = path.join(CONFIG_DIR, 'sessions');
 
+function parseToolArg() {
+  const idx = process.argv.indexOf('--tool');
+  if (idx !== -1 && process.argv[idx + 1]) return process.argv[idx + 1];
+  return 'claude';
+}
+
+function loadAdapter(toolName) {
+  try {
+    const mod = require(`./adapters/${toolName}`);
+    const className = Object.keys(mod).find(k => k.endsWith('Adapter'));
+    if (className) return new mod[className]();
+  } catch { /* fallback */ }
+  return null;
+}
+
 async function main() {
+  const toolName = parseToolArg();
+  const adapter = loadAdapter(toolName);
+
   let input = {};
   try {
     const chunks = [];
@@ -28,21 +45,49 @@ async function main() {
     if (raw.trim()) input = JSON.parse(raw);
   } catch { /* empty or invalid stdin */ }
 
-  const payload = {
-    event: input.hook_event_name,
-    session_id: input.session_id,
-    cwd: input.cwd,
-    timestamp: Date.now(),
-  };
+  let payload;
+  if (adapter) {
+    payload = adapter.normalizePayload(input);
+  } else {
+    payload = {
+      event: input.hook_event_name,
+      session_id: input.session_id,
+      cwd: input.cwd,
+      timestamp: Date.now(),
+    };
 
-  // SessionStart: extract model + persist session file
+    if (input.hook_event_name === 'SessionStart') {
+      payload.model = input.model || null;
+      payload.pid = process.pid;
+      payload.ppid = process.ppid;
+      payload.term_program = process.env.TERM_PROGRAM || null;
+      payload.iterm_session_id = process.env.ITERM_SESSION_ID || null;
+    }
+
+    if (input.hook_event_name === 'PostToolUse') {
+      payload.tool_name = input.tool_name;
+      payload.tool_input = input.tool_input;
+    }
+
+    if (input.hook_event_name === 'Notification') {
+      payload.message = input.message;
+      payload.notification_type = input.notification_type;
+    }
+
+    if (input.hook_event_name === 'Stop') {
+      payload.last_assistant_message = (input.last_assistant_message || '').slice(0, 500);
+    }
+  }
+
+  payload._tool = toolName;
+  payload.tool = toolName;
+
+  if (process.env.FLEET_MODEL_NAME) {
+    payload.fleet_model_name = process.env.FLEET_MODEL_NAME;
+  }
+
+  // SessionStart: persist session file
   if (input.hook_event_name === 'SessionStart') {
-    payload.model = input.model || null;
-    payload.pid = process.pid;
-    payload.ppid = process.ppid;
-    payload.term_program = process.env.TERM_PROGRAM || null;
-    payload.iterm_session_id = process.env.ITERM_SESSION_ID || null;
-
     try {
       const sessionFile = path.join(SESSIONS_DIR, `${input.session_id}.json`);
       fs.mkdirSync(SESSIONS_DIR, { recursive: true });
@@ -50,6 +95,7 @@ async function main() {
         sessionId: input.session_id,
         cwd: input.cwd,
         model: payload.model,
+        tool: toolName,
         term_program: payload.term_program,
         iterm_session_id: payload.iterm_session_id,
         pid: payload.pid,
@@ -60,7 +106,7 @@ async function main() {
     } catch { /* ignore write failures */ }
   }
 
-  // Stop: update session file with last message for persistence
+  // Stop: update session file with last message
   if (input.hook_event_name === 'Stop') {
     try {
       const sessionFile = path.join(SESSIONS_DIR, `${input.session_id}.json`);
@@ -75,39 +121,16 @@ async function main() {
     } catch { /* ignore */ }
   }
 
-  // PostToolUse: only tool_name and tool_input
-  if (input.hook_event_name === 'PostToolUse') {
-    payload.tool_name = input.tool_name;
-    payload.tool_input = input.tool_input;
-  }
-
-  // Notification: message and type
-  if (input.hook_event_name === 'Notification') {
-    payload.message = input.message;
-    payload.notification_type = input.notification_type;
-  }
-
-  // Stop: capture AI's final response text
-  if (input.hook_event_name === 'Stop') {
-    payload.last_assistant_message = (input.last_assistant_message || '').slice(0, 500);
-  }
-
-  // fleet run environment variable
-  if (process.env.FLEET_MODEL_NAME) {
-    payload.fleet_model_name = process.env.FLEET_MODEL_NAME;
-  }
-
-  // Socket forwarding (existing logic)
+  // Socket forwarding
   const client = net.connect(SOCK_PATH, () => {
     client.write(JSON.stringify(payload) + '\n');
     client.end();
   });
   client.on('error', () => { /* master not running */ });
 
-  // Timeout protection for socket connection
   setTimeout(() => process.exit(0), 1000);
 
-  // ─── Notification branch (independent, non-blocking) ───
+  // Notification branch
   if (notifier) {
     try {
       const config = notifier.loadNotifyConfig();
@@ -115,11 +138,12 @@ async function main() {
 
       const sid = input.session_id;
       const sound = config.sound;
+      const displayName = adapter ? adapter.displayName : 'Claude Code';
 
       if (input.hook_event_name === 'Stop') {
         if (config.events.stop) {
           notifier.sendNotification({
-            title: 'Claude Code',
+            title: displayName,
             body: payload.last_assistant_message,
             cwd: payload.cwd,
             sessionId: sid,
@@ -131,7 +155,7 @@ async function main() {
 
       if (input.hook_event_name === 'Notification' && config.events.notification) {
         notifier.sendNotification({
-          title: 'Claude 通知',
+          title: `${displayName} 通知`,
           body: payload.message,
           cwd: payload.cwd,
           sessionId: sid,
