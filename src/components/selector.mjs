@@ -227,15 +227,22 @@ function FormField({ field, isActive, value, cursorPos, error }) {
 
 function InputForm({ title, fields, values: initialValues, requiredFields, onSubmit, onCancel }) {
   const [currentField, setCurrentField] = useState(0);
-  const [formValues, setFormValues] = useState(initialValues || {});
-  const [cursorPositions, setCursorPositions] = useState({});
+  // Unified state: { [label]: { val, cur } } — prevents stale closure bugs
+  const [fieldState, setFieldState] = useState(() => {
+    const s = {};
+    for (const f of fields) {
+      s[f.label] = { val: (initialValues && initialValues[f.label]) || f.value || '', cur: null };
+    }
+    return s;
+  });
   const [validationErrors, setValidationErrors] = useState({});
   const [triedSubmit, setTriedSubmit] = useState(false);
 
-  function getCursorPos(label) {
-    const pos = cursorPositions[label];
-    if (pos !== undefined) return pos;
-    return (formValues[label] || '').length;
+  function getVal(label) { return (fieldState[label] || {}).val || ''; }
+  function getCur(label) {
+    const s = fieldState[label];
+    if (s && s.cur !== null) return s.cur;
+    return getVal(label).length;
   }
 
   useInput((input, key) => {
@@ -244,60 +251,46 @@ function InputForm({ title, fields, values: initialValues, requiredFields, onSub
       return;
     }
 
-    // Field navigation
-    if (key.upArrow) {
-      setCurrentField(i => (i - 1 + fields.length) % fields.length);
-      return;
-    }
-    if (key.downArrow || key.tab) {
-      setCurrentField(i => (i + 1) % fields.length);
-      return;
-    }
+    if (key.upArrow) { setCurrentField(i => (i - 1 + fields.length) % fields.length); return; }
+    if (key.downArrow || key.tab) { setCurrentField(i => (i + 1) % fields.length); return; }
 
-    const field = fields[currentField];
-    const label = field.label;
+    const label = fields[currentField].label;
 
-    // Cursor movement
     if (key.leftArrow) {
-      setCursorPositions(prev => {
-        const pos = prev[label] !== undefined ? prev[label] : (formValues[label] || '').length;
-        return { ...prev, [label]: Math.max(0, pos - 1) };
+      setFieldState(prev => {
+        const s = prev[label] || { val: '', cur: null };
+        const pos = s.cur !== null ? s.cur : s.val.length;
+        return { ...prev, [label]: { ...s, cur: Math.max(0, pos - 1) } };
       });
       return;
     }
     if (key.rightArrow) {
-      setCursorPositions(prev => {
-        const val = formValues[label] || '';
-        const pos = prev[label] !== undefined ? prev[label] : val.length;
-        return { ...prev, [label]: Math.min(val.length, pos + 1) };
+      setFieldState(prev => {
+        const s = prev[label] || { val: '', cur: null };
+        const pos = s.cur !== null ? s.cur : s.val.length;
+        return { ...prev, [label]: { ...s, cur: Math.min(s.val.length, pos + 1) } };
       });
       return;
     }
-
-    // Home / Ctrl+A → move to start
     if (key.ctrl && input === 'a') {
-      setCursorPositions(prev => ({ ...prev, [label]: 0 }));
+      setFieldState(prev => ({ ...prev, [label]: { ...(prev[label] || { val: '' }), cur: 0 } }));
       return;
     }
-    // End / Ctrl+E → move to end
     if (key.ctrl && input === 'e') {
-      setCursorPositions(prev => ({ ...prev, [label]: (formValues[label] || '').length }));
+      setFieldState(prev => {
+        const s = prev[label] || { val: '' };
+        return { ...prev, [label]: { ...s, cur: s.val.length } };
+      });
       return;
     }
 
-    // Backspace: delete char before cursor
-    // Combine key.backspace + key.delete + raw codes for terminal compatibility
-    // (Cursor terminal maps Backspace to key.delete instead of key.backspace)
+    // Backspace
     if (key.backspace || key.delete || input === '\x7f' || input === '\x08') {
-      setFormValues(prev => {
-        const val = prev[label] || '';
-        const pos = cursorPositions[label] !== undefined ? cursorPositions[label] : val.length;
+      setFieldState(prev => {
+        const s = prev[label] || { val: '', cur: null };
+        const pos = s.cur !== null ? s.cur : s.val.length;
         if (pos <= 0) return prev;
-        return { ...prev, [label]: val.slice(0, pos - 1) + val.slice(pos) };
-      });
-      setCursorPositions(prev => {
-        const pos = prev[label] !== undefined ? prev[label] : (formValues[label] || '').length;
-        return { ...prev, [label]: Math.max(0, pos - 1) };
+        return { ...prev, [label]: { val: s.val.slice(0, pos - 1) + s.val.slice(pos), cur: pos - 1 } };
       });
       if (validationErrors[label]) {
         setValidationErrors(prev => { const n = { ...prev }; delete n[label]; return n; });
@@ -312,7 +305,7 @@ function InputForm({ title, fields, values: initialValues, requiredFields, onSub
       let firstEmpty = -1;
       for (let i = 0; i < fields.length; i++) {
         const f = fields[i];
-        if (required.includes(f.label) && !formValues[f.label]) {
+        if (required.includes(f.label) && !getVal(f.label)) {
           errors[f.label] = true;
           if (firstEmpty === -1) firstEmpty = i;
         }
@@ -323,21 +316,18 @@ function InputForm({ title, fields, values: initialValues, requiredFields, onSub
         if (firstEmpty !== -1) setCurrentField(firstEmpty);
         return;
       }
-      onSubmit(formValues);
+      const values = {};
+      for (const f of fields) values[f.label] = getVal(f.label);
+      onSubmit(values);
       return;
     }
 
-    // Text input (handles both typing and paste)
-    // Exclude raw backspace/delete codes that some terminals send as input
+    // Text input (typing and paste)
     if (input && !key.ctrl && !key.meta && input !== '\x7f' && input !== '\x08' && input !== '\x1b[3~') {
-      setFormValues(prev => {
-        const val = prev[label] || '';
-        const pos = cursorPositions[label] !== undefined ? cursorPositions[label] : val.length;
-        return { ...prev, [label]: val.slice(0, pos) + input + val.slice(pos) };
-      });
-      setCursorPositions(prev => {
-        const pos = prev[label] !== undefined ? prev[label] : (formValues[label] || '').length;
-        return { ...prev, [label]: pos + input.length };
+      setFieldState(prev => {
+        const s = prev[label] || { val: '', cur: null };
+        const pos = s.cur !== null ? s.cur : s.val.length;
+        return { ...prev, [label]: { val: s.val.slice(0, pos) + input + s.val.slice(pos), cur: pos + input.length } };
       });
       if (validationErrors[label]) {
         setValidationErrors(prev => { const n = { ...prev }; delete n[label]; return n; });
@@ -357,8 +347,8 @@ function InputForm({ title, fields, values: initialValues, requiredFields, onSub
         key: field.label,
         field,
         isActive,
-        value: formValues[field.label] !== undefined ? formValues[field.label] : (field.value || ''),
-        cursorPos: isActive ? getCursorPos(field.label) : undefined,
+        value: getVal(field.label),
+        cursorPos: isActive ? getCur(field.label) : undefined,
         error: hasError,
       });
     }),
