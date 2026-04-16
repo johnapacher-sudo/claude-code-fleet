@@ -6,23 +6,24 @@
 
 <!-- README-I18N:END -->
 
-在一个终端中并行运行多个 Claude Code 实例，支持不同的 API Key、模型和端点 — 零外部依赖。
+在一个终端中并行运行多个 AI 编码工具实例，支持不同的 API Key、模型和端点 — 零外部依赖。支持 **Claude Code** 和 **Codex CLI**，具备可扩展的适配器架构以便未来接入更多工具。
 
 ## 核心特性
 
-- **观察者面板** — 实时 TUI 自动发现所有 Claude Code 进程，展示状态、操作和 AI 消息
+- **多工具支持** — 通过 Adapter 模式统一管理 Claude Code 和 Codex CLI；易于扩展其他工具
+- **观察者面板** — 实时 TUI 自动发现所有 AI 编码工具进程，展示状态、操作和 AI 消息
 - **终端聚焦** — 一键跳转到任意工作进程所在的终端窗口/标签页（支持 iTerm、Terminal.app、VSCode、Cursor、Warp、WezTerm）
 - **会话持久化** — 工作进程在 master 重启后依然存在；会话状态持久化到磁盘并自动恢复
 - **模型配置** — 命名配置文件，可快速启动使用不同模型、API Key 和代理设置的交互式会话
 - **Fleet 模式** — 在配置文件中定义多个实例，作为后台进程进行管理
 - **HTTP 代理** — 支持按配置或按运行设置代理；自动设置 `HTTP_PROXY` 和 `HTTPS_PROXY` 环境变量
 - **交互式界面** — 方向键选择器、确认对话框、多字段输入表单，全部在终端中运行
-- **桌面通知** — Claude Code 完成任务或发送通知时弹出系统通知，支持配置提示音
+- **桌面通知** — 工具完成任务或发送通知时弹出系统通知，支持配置提示音
 
 ## 前置要求
 
 - [Node.js](https://nodejs.org/) >= 18
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)（`npm install -g @anthropic-ai/claude-code`）
+- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)（`npm install -g @anthropic-ai/claude-code`）和/或 [Codex CLI](https://developers.openai.com/codex/)（`npm install -g @openai/codex`）
 
 ## 快速开始
 
@@ -35,7 +36,9 @@ git clone https://github.com/<your-username>/claude-code-fleet.git
 cd claude-code-fleet
 
 # 添加模型配置（交互式）
-fleet model add
+fleet model add          # 先选择工具类型
+fleet model add claude   # 添加 Claude Code 配置
+fleet model add codex    # 添加 Codex CLI 配置
 
 # 运行单个实例（交互式选择器）
 fleet run
@@ -68,21 +71,21 @@ fleet down
 
 ### 观察者模式（面板）
 
-启动实时终端面板，观察所有活跃的 Claude Code 进程。
+启动实时终端面板，观察所有活跃的 AI 编码工具进程。
 
 - `fleet start` 启动观察者 TUI
-- 自动发现所有 Claude Code 进程（通过 async hooks：SessionStart、PostToolUse、Stop、Notification）
-- 显示每个进程的会话 ID、模型名称、工作目录、工具使用和 AI 消息
+- 自动发现所有 Claude Code 和 Codex CLI 进程（通过 async hooks）
+- 显示每个进程的会话 ID、模型名称、工具类型、工作目录、工具使用和 AI 消息
 - 进程启动时自动出现，停止时（3+ 小时无事件）或进程死亡后（30 分钟）自动清理
 - 会话状态持久化到磁盘 — 工作进程在 master 重启后依然存在
-- 无需配置文件 — 直接运行 `fleet start` 然后启动 Claude Code 进程即可
+- 无需配置文件 — 直接运行 `fleet start` 然后启动 Claude Code 或 Codex 进程即可
 
 ### 模型配置模式
 
-管理命名的模型配置，并启动单个交互式 Claude Code 会话。
+管理命名的模型配置，并启动单个交互式 AI 编码会话。
 
 - 配置文件存储在 `~/.config/claude-code-fleet/models.json`
-- 每个配置包含：名称、模型 ID、API Key、API Base URL 和可选的代理 URL
+- 每个配置包含：名称、工具类型、模型 ID、API Key、API Base URL 和可选的代理 URL
 - `fleet run`（或不带命令直接执行 `fleet`）启动前台交互式会话，继承 `stdio`
 - 如果未指定 `--model` 参数，将显示交互式箭头键选择菜单
 - 使用 `--proxy` 通过命令行启用代理，或使用配置中保存的代理地址
@@ -100,11 +103,11 @@ fleet down
 | 命令 | 别名 | 说明 |
 |------|------|------|
 | `fleet start` | — | 启动观察者面板（TUI） |
-| `fleet hooks install` | — | 安装 fleet hooks 到 ~/.claude/settings.json |
-| `fleet hooks remove` | — | 从 ~/.claude/settings.json 移除 fleet hooks |
-| `fleet hooks status` | — | 查看 hooks 安装状态 |
-| `fleet run` | — | 使用模型配置启动单个交互式 Claude Code 会话 |
-| `fleet model add` | — | 交互式添加新的模型配置 |
+| `fleet hooks install` | — | 安装 fleet hooks 到所有已检测的工具 |
+| `fleet hooks remove` | — | 从所有工具移除 fleet hooks |
+| `fleet hooks status` | — | 按工具查看 hooks 安装状态 |
+| `fleet run` | — | 使用模型配置启动交互式会话 |
+| `fleet model add [tool]` | — | 添加新的模型配置（`claude`、`codex` 或交互式选择） |
 | `fleet model list` | `model ls` | 列出所有已保存的模型配置 |
 | `fleet model edit` | — | 交互式编辑已有的模型配置 |
 | `fleet model delete` | `model rm` | 交互式删除模型配置 |
@@ -125,6 +128,7 @@ fleet down
 | `--model <name>` | 指定模型配置（用于 `run` 命令） |
 | `--cwd <path>` | 设置工作目录（用于 `run` 命令） |
 | `--proxy [url]` | 启用 HTTP 代理；省略 url 时使用配置中保存的代理地址（用于 `run` 命令） |
+| `--tools <names>` | 逗号分隔的工具名称（用于 `hooks install`） |
 
 ## 配置
 
@@ -139,12 +143,13 @@ fleet down
 | 字段 | 必填 | 说明 |
 |------|------|------|
 | `name` | 是 | 唯一的实例名称 |
-| `apiKey` | 是 | Anthropic API Key（设置为 `ANTHROPIC_AUTH_TOKEN`） |
-| `model` | 否 | Claude 模型 ID（例如 `claude-opus-4-6`、`claude-sonnet-4-6`） |
-| `apiBaseUrl` | 否 | 自定义 API 端点（设置为 `ANTHROPIC_BASE_URL`） |
+| `tool` | 否 | 工具类型：`claude`（默认）或 `codex` |
+| `apiKey` | 是 | API Key（Claude 用 Anthropic，Codex 用 OpenAI） |
+| `model` | 否 | 模型 ID（例如 `claude-opus-4-6`、`gpt-5.4`） |
+| `apiBaseUrl` | 否 | 自定义 API 端点 |
 | `cwd` | 否 | 实例的工作目录（不存在时自动创建） |
 | `env` | 否 | 额外的环境变量，以键值对形式 |
-| `args` | 否 | 传递给 `claude` 的额外 CLI 参数 |
+| `args` | 否 | 传递给工具二进制的额外 CLI 参数 |
 | `proxy` | 否 | HTTP 代理 URL（设置 `HTTP_PROXY` 和 `HTTPS_PROXY`） |
 
 ### 示例配置
@@ -154,6 +159,7 @@ fleet down
   "instances": [
     {
       "name": "opus-worker",
+      "tool": "claude",
       "apiKey": "sk-ant-api03-xxxxx",
       "model": "claude-opus-4-6",
       "apiBaseUrl": "https://api.anthropic.com",
@@ -161,9 +167,17 @@ fleet down
     },
     {
       "name": "sonnet-worker",
+      "tool": "claude",
       "apiKey": "sk-ant-api03-yyyyy",
       "model": "claude-sonnet-4-6",
       "cwd": "./workspace/sonnet"
+    },
+    {
+      "name": "codex-worker",
+      "tool": "codex",
+      "apiKey": "sk-openai-zzzzz",
+      "model": "gpt-5.4",
+      "cwd": "./workspace/codex"
     },
     {
       "name": "custom-endpoint",
@@ -183,10 +197,10 @@ fleet down
 
 ### 工作原理
 
-1. 复制 `hook-client.js` 到 `~/.config/claude-code-fleet/hooks/`
-2. 注入 async hooks 到 `~/.claude/settings.json`，监听四个 Claude Code 事件
+1. 复制 `hook-client.js` 和适配器模块到 `~/.config/claude-code-fleet/hooks/`
+2. 自动检测已安装的工具，注入 hooks 到各自的配置文件（Claude 写入 `~/.claude/settings.json`，Codex 写入 `~/.codex/hooks.json`）
 3. 启动 Unix socket 服务，监听 `~/.config/claude-code-fleet/fleet.sock`
-4. 当任何 Claude Code 进程触发 hook 时，客户端将 JSON 事件发送到 socket
+4. 当任何工具进程触发 hook 时，客户端将标准化的 JSON 事件发送到 socket
 5. Master 通过 `session_id` 跟踪每个会话，记录模型信息、工具使用和 AI 消息
 6. TUI 以 100ms 防抖实时渲染
 7. 会话元数据持久化到磁盘 — master 重启后自动恢复
@@ -194,12 +208,12 @@ fleet down
 
 ### Hook 事件
 
-| 事件 | 捕获内容 |
-|------|----------|
-| `SessionStart` | 模型名称、进程 PID/PPID、终端程序、iTerm 会话 ID |
-| `PostToolUse` | 工具名称和输入（Edit/Write/Read 显示文件名，Bash 显示命令，Grep 显示模式） |
-| `Stop` | 最后一条助手消息（截断至 500 字符），将工作进程标记为空闲 |
-| `Notification` | 以通知消息作为摘要开启新一轮对话 |
+| 事件 | Claude Code | Codex CLI | 捕获内容 |
+|------|:-----------:|:---------:|----------|
+| `SessionStart` | ✓ | ✓ | 模型名称、工具类型、进程 PID/PPID、终端程序 |
+| `PostToolUse` | ✓ | ✓ | 工具名称和输入（Edit/Write/Read 显示文件名，Bash 显示命令，Grep 显示模式） |
+| `Stop` | ✓ | ✓ | 最后一条助手消息（截断至 500 字符），将工作进程标记为空闲 |
+| `Notification` | ✓ | — | 以通知消息作为摘要开启新一轮对话 |
 
 ### 工作进程状态
 
@@ -245,19 +259,20 @@ fleet down
 
 1. 读取配置文件获取实例定义
 2. 验证配置（必填字段、名称唯一性）
-3. 检查 `claude` CLI 是否可用
+3. 检查每个实例所需的工具 CLI（`claude` 和/或 `codex`）是否可用
 4. 将每个实例作为独立后台进程启动，应用配置的模型和环境变量
 5. 在状态文件中跟踪 PID 以进行生命周期管理
 6. 每次操作时自动清理失效条目
 
 ### Hooks
 
-Hooks 安装在 `~/.claude/settings.json` 中，是持久的 — 不受 master 重启影响。当 master 未运行时，hook-client 在 < 1ms 内静默退出（不影响 Claude Code）。
+Hooks 安装在各工具的配置文件中，是持久的 — 不受 master 重启影响。当 master 未运行时，hook-client 在 < 1ms 内静默退出（不影响工具进程）。
 
 ```bash
-fleet hooks install   # 一次性安装
-fleet hooks status    # 检查安装状态
-fleet hooks remove    # 完整卸载
+fleet hooks install                # 自动检测工具，全部安装
+fleet hooks install --tools codex  # 仅安装 Codex 的 hooks
+fleet hooks status                 # 按工具查看安装状态
+fleet hooks remove                 # 完整卸载所有工具的 hooks
 ```
 
 ## 交互式界面
@@ -335,7 +350,8 @@ fleet notify --no-sound   # 关闭提示音
 | `models.json` | 已保存的模型配置 |
 | `fleet-state.json` | 后台实例 PID（Fleet 模式） |
 | `fleet.sock` | Unix 域套接字（临时的，观察者模式） |
-| `hooks/hook-client.js` | Claude Code 事件的 Hook 脚本 |
+| `hooks/hook-client.js` | 工具事件的 Hook 脚本 |
+| `hooks/adapters/` | 工具适配器模块（Claude、Codex），由 hook-client 使用 |
 | `hooks/notifier.js` | 桌面通知模块（由 hook-client 加载） |
 | `notify.json` | 桌面通知配置 |
 | `sessions/<id>.json` | 每个会话的元数据（观察者恢复用） |
