@@ -108,7 +108,14 @@ function loadModels() {
   const p = getModelsPath();
   if (!fs.existsSync(p)) return { models: [] };
   try {
-    return JSON.parse(fs.readFileSync(p, 'utf-8'));
+    const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
+    // Auto-migrate: backfill missing tool field with 'claude'
+    let migrated = false;
+    for (const m of (data.models || [])) {
+      if (!m.tool) { m.tool = 'claude'; migrated = true; }
+    }
+    if (migrated) saveModels(data);
+    return data;
   } catch {
     return { models: [] };
   }
