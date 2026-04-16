@@ -286,7 +286,8 @@ function InputForm({ title, fields, values: initialValues, requiredFields, onSub
     }
 
     // Backspace: delete char before cursor
-    if (key.backspace) {
+    // Check key.backspace + raw codes (\x7f DEL, \x08 BS) for terminal compatibility
+    if (key.backspace || input === '\x7f' || input === '\x08') {
       setFormValues(prev => {
         const val = prev[label] || '';
         const pos = cursorPositions[label] !== undefined ? cursorPositions[label] : val.length;
@@ -304,7 +305,7 @@ function InputForm({ title, fields, values: initialValues, requiredFields, onSub
     }
 
     // Delete key: delete char at cursor
-    if (key.delete) {
+    if (key.delete || input === '\x1b[3~') {
       setFormValues(prev => {
         const val = prev[label] || '';
         const pos = cursorPositions[label] !== undefined ? cursorPositions[label] : val.length;
@@ -340,7 +341,8 @@ function InputForm({ title, fields, values: initialValues, requiredFields, onSub
     }
 
     // Text input (handles both typing and paste)
-    if (input && !key.ctrl && !key.meta) {
+    // Exclude raw backspace/delete codes that some terminals send as input
+    if (input && !key.ctrl && !key.meta && input !== '\x7f' && input !== '\x08' && input !== '\x1b[3~') {
       setFormValues(prev => {
         const val = prev[label] || '';
         const pos = cursorPositions[label] !== undefined ? cursorPositions[label] : val.length;
