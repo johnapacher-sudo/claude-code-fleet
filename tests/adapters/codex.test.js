@@ -7,6 +7,7 @@ const { CodexAdapter } = await import('../../src/adapters/codex.js');
 const CODEX_DIR = path.join(os.homedir(), '.codex');
 const HOOKS_PATH = path.join(CODEX_DIR, 'hooks.json');
 const CONFIG_PATH = path.join(CODEX_DIR, 'config.toml');
+const TEST_HOOK_CLIENT = path.join(os.homedir(), '.config', 'claude-code-fleet', 'hooks', 'hook-client.js');
 
 function createMockFs() {
   const store = {};
@@ -59,17 +60,27 @@ describe('CodexAdapter', () => {
       });
       expect(args).toContain('--extra-flag');
     });
+
+    it('sets openai_base_url via -c config when apiBaseUrl is present', () => {
+      const args = adapter.buildArgs({
+        model: 'gpt-4o',
+        apiBaseUrl: 'https://custom.openai.com/v1',
+      });
+      expect(args).toContain('-c');
+      expect(args).toContain('openai_base_url="https://custom.openai.com/v1"');
+      expect(args).not.toContain('OPENAI_BASE_URL');
+    });
   });
 
   describe('buildEnv', () => {
-    it('sets OPENAI_API_KEY and OPENAI_BASE_URL when present', () => {
+    it('sets OPENAI_API_KEY when present', () => {
       const env = adapter.buildEnv(
         { name: 'codex-1', apiKey: 'sk-xxx', apiBaseUrl: 'https://custom.openai.com' },
-        { PATH: '/bin' }
+        { PATH: '/bin', OPENAI_BASE_URL: 'https://deprecated.example/v1' }
       );
       expect(env.FLEET_MODEL_NAME).toBe('codex-1');
       expect(env.OPENAI_API_KEY).toBe('sk-xxx');
-      expect(env.OPENAI_BASE_URL).toBe('https://custom.openai.com');
+      expect(env.OPENAI_BASE_URL).toBeUndefined();
       expect(env.PATH).toBe('/bin');
     });
 
@@ -90,7 +101,7 @@ describe('CodexAdapter', () => {
     });
 
     it('installHooks creates hooks.json and config.toml', () => {
-      adapter.installHooks('/opt/claude-code-fleet/hooks/hook-client.js');
+      adapter.installHooks(TEST_HOOK_CLIENT);
 
       expect(mockFs.store[HOOKS_PATH]).toBeDefined();
       const hooks = JSON.parse(mockFs.store[HOOKS_PATH]);
@@ -99,8 +110,8 @@ describe('CodexAdapter', () => {
       expect(hooks.hooks.Stop).toHaveLength(1);
       expect(hooks.hooks.Notification).toBeUndefined();
       const cmd = hooks.hooks.SessionStart[0].hooks[0].command;
+      expect(cmd).toBe(`node ${TEST_HOOK_CLIENT} --tool codex`);
       expect(cmd).toContain('claude-code-fleet');
-      expect(cmd).toContain('--tool codex');
 
       expect(mockFs.store[CONFIG_PATH]).toBeDefined();
       expect(mockFs.store[CONFIG_PATH]).toContain('codex_hooks = true');
@@ -111,20 +122,20 @@ describe('CodexAdapter', () => {
       mockFs.store[HOOKS_PATH] = JSON.stringify({
         hooks: {
           SessionStart: [{
-            hooks: [{ type: 'command', command: 'node /x/claude-code-fleet/hook --tool codex' }]
+            hooks: [{ type: 'command', command: `node ${TEST_HOOK_CLIENT} --tool codex` }]
           }]
         }
       });
       mockFs.store[CONFIG_PATH] = '[features]\ncodex_hooks = true\n';
 
-      adapter.installHooks('/path/to/hook-client.js');
+      adapter.installHooks(TEST_HOOK_CLIENT);
       const hooks = JSON.parse(mockFs.store[HOOKS_PATH]);
       expect(hooks.hooks.SessionStart).toHaveLength(1);
     });
 
     it('installHooks appends to existing [features] section in config.toml', () => {
       mockFs.store[CONFIG_PATH] = '[features]\nsome_flag = true\n';
-      adapter.installHooks('/path/to/hook-client.js');
+      adapter.installHooks(TEST_HOOK_CLIENT);
       expect(mockFs.store[CONFIG_PATH]).toContain('codex_hooks = true');
       expect(mockFs.store[CONFIG_PATH]).toContain('some_flag = true');
     });

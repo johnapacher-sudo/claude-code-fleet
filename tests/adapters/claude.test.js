@@ -5,6 +5,7 @@ import os from 'os';
 const { ClaudeAdapter } = await import('../../src/adapters/claude.js');
 
 const SETTINGS_PATH = path.join(os.homedir(), '.claude', 'settings.json');
+const TEST_HOOK_CLIENT = path.join(os.homedir(), '.config', 'claude-code-fleet', 'hooks', 'hook-client.js');
 
 function createMockFs() {
   const store = {};
@@ -92,26 +93,26 @@ describe('ClaudeAdapter', () => {
     });
 
     it('installHooks creates hooks in empty settings', () => {
-      adapter.installHooks('/opt/claude-code-fleet/hooks/hook-client.js');
+      adapter.installHooks(TEST_HOOK_CLIENT);
       const written = JSON.parse(mockFs.store[SETTINGS_PATH]);
       expect(written.hooks.SessionStart).toHaveLength(1);
       expect(written.hooks.PostToolUse).toHaveLength(1);
       expect(written.hooks.Stop).toHaveLength(1);
       expect(written.hooks.Notification).toHaveLength(1);
       const cmd = written.hooks.SessionStart[0].hooks[0].command;
+      expect(cmd).toBe(`node ${TEST_HOOK_CLIENT} --tool claude`);
       expect(cmd).toContain('claude-code-fleet');
-      expect(cmd).toContain('--tool claude');
     });
 
     it('installHooks does not duplicate existing hooks', () => {
       mockFs.store[SETTINGS_PATH] = JSON.stringify({
         hooks: {
           SessionStart: [{
-            hooks: [{ type: 'command', command: 'node /path/claude-code-fleet/hook --tool claude' }]
+            hooks: [{ type: 'command', command: `node ${TEST_HOOK_CLIENT} --tool claude` }]
           }]
         }
       });
-      adapter.installHooks('/path/to/hook-client.js');
+      adapter.installHooks(TEST_HOOK_CLIENT);
       const written = JSON.parse(mockFs.store[SETTINGS_PATH]);
       expect(written.hooks.SessionStart).toHaveLength(1);
       expect(written.hooks.PostToolUse).toHaveLength(1);
