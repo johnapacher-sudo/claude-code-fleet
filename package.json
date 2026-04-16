@@ -1,7 +1,7 @@
 {
   "name": "@dking/claude-code-fleet",
-  "version": "1.1.2",
-  "description": "Run multiple Claude Code instances with different API keys and models in parallel",
+  "version": "1.2.0",
+  "description": "Run multiple Claude Code and Codex CLI instances with different API keys and models in parallel",
   "main": "src/index.js",
   "bin": {
     "fleet": "./src/index.js"

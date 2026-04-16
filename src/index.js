@@ -4,16 +4,11 @@ const { spawnSync, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const readline = require('readline');
-const os = require('os');
-const { Master } = require('./master');
 const { registry } = require('./adapters');
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const CONFIG_FILENAME = 'fleet.config.json';
-const LOCAL_CONFIG_FILENAME = 'fleet.config.local.json';
 const GLOBAL_CONFIG_DIR = path.join(process.env.HOME || '~', '.config', 'claude-code-fleet');
-const STATE_FILE = path.join(GLOBAL_CONFIG_DIR, 'fleet-state.json');
 
 const ANSI = {
   bold: s => `\x1b[1m${s}\x1b[0m`,
@@ -101,123 +96,6 @@ function checkToolDeps(toolName) {
     console.error(ANSI.red(`Missing dependency: ${adapter.binary} (${adapter.displayName})`));
     process.exit(1);
   }
-}
-
-// ─── Fleet state (PID tracking) ─────────────────────────────────────────────
-
-function loadState() {
-  if (!fs.existsSync(STATE_FILE)) return { instances: {} };
-  try {
-    return JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8'));
-  } catch {
-    return { instances: {} };
-  }
-}
-
-function saveState(state) {
-  const dir = path.dirname(STATE_FILE);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2) + '\n');
-}
-
-function isProcessAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function cleanupState() {
-  const state = loadState();
-  let changed = false;
-  for (const name of Object.keys(state.instances)) {
-    const pid = state.instances[name].pid;
-    if (!isProcessAlive(pid)) {
-      delete state.instances[name];
-      changed = true;
-    }
-  }
-  if (changed) saveState(state);
-}
-
-// ─── Config ──────────────────────────────────────────────────────────────────
-
-function configSearchPaths() {
-  return [
-    path.join(process.cwd(), LOCAL_CONFIG_FILENAME),
-    path.join(process.cwd(), CONFIG_FILENAME),
-    path.join(GLOBAL_CONFIG_DIR, 'config.json'),
-  ];
-}
-
-function findConfigFile(cliPath) {
-  if (cliPath) {
-    const resolved = path.resolve(cliPath);
-    if (!fs.existsSync(resolved)) {
-      console.error(ANSI.red(`Config not found: ${resolved}`));
-      process.exit(1);
-    }
-    return resolved;
-  }
-  for (const p of configSearchPaths()) {
-    if (fs.existsSync(p)) return p;
-  }
-  return null;
-}
-
-function loadConfig(cliPath) {
-  const file = findConfigFile(cliPath);
-  if (!file) {
-    console.error(ANSI.red('No config file found. Searched:'));
-    configSearchPaths().forEach(p => console.error(`  - ${p}`));
-    console.error(`\nRun ${ANSI.bold('fleet init')} to create one, or copy fleet.config.example.json.`);
-    process.exit(1);
-  }
-
-  let raw;
-  try {
-    raw = JSON.parse(fs.readFileSync(file, 'utf-8'));
-  } catch (e) {
-    console.error(ANSI.red(`Invalid JSON in ${file}: ${e.message}`));
-    process.exit(1);
-  }
-
-  const errors = validateConfig(raw);
-  if (errors.length > 0) {
-    console.error(ANSI.red(`Config errors in ${file}:`));
-    errors.forEach(e => console.error(`  - ${e}`));
-    process.exit(1);
-  }
-
-  return { file, ...raw };
-}
-
-function validateConfig(config) {
-  const errors = [];
-  if (!Array.isArray(config.instances) || config.instances.length === 0) {
-    errors.push('`instances` must be a non-empty array');
-    return errors;
-  }
-  const names = new Set();
-  config.instances.forEach((inst, i) => {
-    const prefix = `instances[${i}]`;
-    if (!inst.name || typeof inst.name !== 'string') {
-      errors.push(`${prefix}: "name" is required`);
-    } else if (names.has(inst.name)) {
-      errors.push(`${prefix}: duplicate name "${inst.name}"`);
-    } else {
-      names.add(inst.name);
-    }
-    if (!inst.apiKey || typeof inst.apiKey !== 'string') {
-      errors.push(`${prefix}: "apiKey" is required`);
-    }
-    if (inst.tool && !registry.get(inst.tool)) {
-      errors.push(`${prefix}: unknown tool "${inst.tool}" (available: ${registry.all().map(a => a.name).join(', ')})`);
-    }
-  });
-  return errors;
 }
 
 // ─── Model profiles ──────────────────────────────────────────────────────────
@@ -519,129 +397,6 @@ async function cmdRun(modelName, cwd, proxyOpt) {
   child.on('exit', code => process.exit(code || 0));
 }
 
-// ─── Config init ─────────────────────────────────────────────────────────────
-
-function cmdInit() {
-  const target = path.join(process.cwd(), CONFIG_FILENAME);
-  if (fs.existsSync(target)) {
-    console.error(ANSI.yellow(`${CONFIG_FILENAME} already exists.`));
-    process.exit(1);
-  }
-
-  const example = path.join(__dirname, '..', 'fleet.config.example.json');
-  const template = fs.existsSync(example)
-    ? fs.readFileSync(example, 'utf-8')
-    : JSON.stringify({
-        instances: [
-          {
-            name: 'worker-1',
-            tool: 'claude',
-            apiKey: 'your-api-key-here',
-            model: 'claude-sonnet-4-6',
-          },
-        ],
-      }, null, 2) + '\n';
-
-  fs.writeFileSync(target, template);
-  console.log(ANSI.green(`Created ${target}`));
-  console.log('Edit it with your API keys and model preferences.');
-}
-
-// ─── Instance filtering ──────────────────────────────────────────────────────
-
-function filterInstances(instances, onlyNames) {
-  if (!onlyNames || onlyNames.length === 0) return instances;
-  const nameSet = new Set(onlyNames);
-  const filtered = instances.filter(i => nameSet.has(i.name));
-  const missing = [...nameSet].filter(n => !instances.some(i => i.name === n));
-  if (missing.length > 0) {
-    console.error(ANSI.yellow(`Warning: unknown instances: ${missing.join(', ')}`));
-  }
-  if (filtered.length === 0) {
-    console.error(ANSI.red('No matching instances found.'));
-    process.exit(1);
-  }
-  return filtered;
-}
-
-// ─── Fleet commands ──────────────────────────────────────────────────────────
-
-function cmdUp(config, onlyNames) {
-  cleanupState();
-
-  const state = loadState();
-  const instances = filterInstances(config.instances, onlyNames);
-
-  for (const inst of instances) {
-    if (state.instances[inst.name] && isProcessAlive(state.instances[inst.name].pid)) {
-      console.log(ANSI.yellow(`  [${inst.name}] already running (pid ${state.instances[inst.name].pid})`));
-      continue;
-    }
-
-    const toolName = inst.tool || 'claude';
-    checkToolDeps(toolName);
-    const adapter = registry.get(toolName);
-
-    const cwd = inst.cwd ? path.resolve(inst.cwd) : process.cwd();
-    if (!fs.existsSync(cwd)) fs.mkdirSync(cwd, { recursive: true });
-
-    const baseEnv = { ...process.env };
-    if (inst.env) Object.assign(baseEnv, inst.env);
-    applyProxy(baseEnv, inst.proxy);
-    const env = adapter.buildEnv(inst, baseEnv);
-
-    const args = adapter.buildArgs(inst);
-
-    const child = spawn(adapter.binary, args, {
-      cwd,
-      env,
-      stdio: 'ignore',
-      detached: true,
-    });
-    child.unref();
-
-    state.instances[inst.name] = {
-      pid: child.pid,
-      tool: toolName,
-      model: inst.model || 'default',
-      cwd,
-      startedAt: new Date().toISOString(),
-    };
-
-    const proxyTag = inst.proxy ? ` proxy=${inst.proxy}` : '';
-    console.log(ANSI.green(`  [${inst.name}]`) + ` model=${ANSI.cyan(inst.model || 'default')} pid=${child.pid}${proxyTag}`);
-  }
-
-  saveState(state);
-  console.log(`\nFleet launched with ${instances.length} instance(s).`);
-  console.log(ANSI.dim('  fleet ls       # List running instances'));
-  console.log(ANSI.dim('  fleet down     # Stop all instances'));
-}
-
-function cmdDown() {
-  cleanupState();
-  const state = loadState();
-  const names = Object.keys(state.instances);
-  if (names.length === 0) {
-    console.log(ANSI.yellow('No running instances.'));
-    return;
-  }
-
-  for (const name of names) {
-    const pid = state.instances[name].pid;
-    try {
-      process.kill(pid, 'SIGTERM');
-      console.log(ANSI.green(`  [${name}] stopped (pid ${pid})`));
-    } catch {
-      console.log(ANSI.yellow(`  [${name}] already exited`));
-    }
-  }
-
-  state.instances = {};
-  saveState(state);
-  console.log('\nFleet stopped.');
-}
-
 function cmdHooksInstall(toolsFilter) {
   if (toolsFilter) {
     const toolNames = toolsFilter.split(',');
@@ -772,45 +527,6 @@ function cmdNotify(opts) {
   console.log();
 }
 
-function cmdRestart(config, onlyNames) {
-  cmdDown();
-  cmdUp(config, onlyNames);
-}
-
-function cmdLs() {
-  cleanupState();
-  const state = loadState();
-  const names = Object.keys(state.instances);
-  if (names.length === 0) {
-    console.log(ANSI.yellow('No running instances.'));
-    return;
-  }
-
-  console.log(ANSI.bold('\nRunning instances:\n'));
-  for (const name of names) {
-    const inst = state.instances[name];
-    console.log(`  ${ANSI.green(name)}  model=${ANSI.cyan(inst.model)}  pid=${inst.pid}`);
-  }
-}
-
-function cmdStatus(config) {
-  console.log(`${ANSI.bold('Instance Configs:')}\n`);
-  for (const inst of config.instances) {
-    const cwd = inst.cwd ? path.resolve(inst.cwd) : process.cwd();
-    console.log(`  ${ANSI.green(inst.name)}`);
-    console.log(`    model:    ${ANSI.cyan(inst.model || 'default')}`);
-    console.log(`    endpoint: ${inst.apiBaseUrl || 'https://api.anthropic.com'}`);
-    console.log(`    cwd:      ${cwd}`);
-    if (inst.proxy) {
-      console.log(`    proxy:    ${inst.proxy}`);
-    }
-    if (inst.env && Object.keys(inst.env).length > 0) {
-      console.log(`    env:      ${Object.keys(inst.env).join(', ')}`);
-    }
-    console.log();
-  }
-}
-
 // ─── Master commands ─────────────────────────────────────────────────────
 
 async function cmdStart() {
@@ -827,11 +543,7 @@ function parseArgs(argv) {
   let i = 0;
   while (i < argv.length) {
     const arg = argv[i];
-    if (arg === '--config' && argv[i + 1]) {
-      opts.config = argv[++i];
-    } else if (arg === '--only' && argv[i + 1]) {
-      opts.only = argv[++i].split(',');
-    } else if (arg === '--model' && argv[i + 1]) {
+    if (arg === '--model' && argv[i + 1]) {
       opts.model = argv[++i];
     } else if (arg === '--cwd' && argv[i + 1]) {
       opts.cwd = argv[++i];
@@ -882,12 +594,6 @@ ${ANSI.bold('Commands:')}
   model list          List all model profiles
   model edit          Edit a model profile (interactive)
   model delete        Delete a model profile (interactive)
-  up                  Start instances from config (background)
-  down                Stop all background instances
-  restart             Restart instances
-  ls                  List running instances
-  status              Show instance configuration details
-  init                Create a fleet.config.json from template
   notify              Configure desktop notifications
 
 ${ANSI.bold('Supported Tools:')}
@@ -895,8 +601,6 @@ ${ANSI.bold('Supported Tools:')}
   codex               Codex CLI (openai)
 
 ${ANSI.bold('Options:')}
-  --config <path>   Use specific config file
-  --only <names>    Comma-separated instance names to target
   --model <name>    Model profile name (for run command)
   --cwd <path>      Working directory (for run command)
   --proxy [url]     Enable HTTP proxy (uses profile proxy if url omitted)
@@ -914,7 +618,6 @@ ${ANSI.bold('Examples:')}
   fleet model add claude            # Add a Claude model profile
   fleet model add codex             # Add a Codex model profile
   fleet model add                   # Add a model profile interactively
-  fleet up                          # Start all instances (background)
   fleet notify                      # Show notification config
   fleet notify --on                 # Enable notifications
   fleet notify --no-sound           # Disable notification sound
@@ -936,12 +639,7 @@ function main() {
     process.exit(0);
   }
 
-  if (command === 'init') {
-    cmdInit();
-    return;
-  }
-
-  // Model management commands (don't need fleet config)
+  // Model management commands
   if (command === 'model') {
     const modelCmd = subcommand || 'list';
     switch (modelCmd) {
@@ -967,13 +665,13 @@ function main() {
     return;
   }
 
-  // Run command (doesn't need fleet config)
+  // Run command
   if (command === 'run') {
     cmdRun(opts.model, opts.cwd, opts.proxy);
     return;
   }
 
-  // Observer start (doesn't need fleet config)
+  // Observer start
   if (command === 'start') {
     cmdStart().catch(err => {
       console.error(ANSI.red(`Fatal: ${err.message}`));
@@ -982,7 +680,7 @@ function main() {
     return;
   }
 
-  // Hooks management (doesn't need fleet config)
+  // Hooks management
   if (command === 'hooks') {
     const hooksCmd = subcommand || 'status';
     switch (hooksCmd) {
@@ -1003,38 +701,15 @@ function main() {
     return;
   }
 
-  // Notify configuration (doesn't need fleet config)
+  // Notify configuration
   if (command === 'notify') {
     cmdNotify(opts);
     return;
   }
 
-  // Remaining commands need fleet config
-  const config = loadConfig(opts.config);
-
-  switch (command) {
-    case 'up':
-      cmdUp(config, opts.only);
-      break;
-    case 'down':
-    case 'stop':
-      cmdDown();
-      break;
-    case 'restart':
-      cmdRestart(config, opts.only);
-      break;
-    case 'ls':
-    case 'list':
-      cmdLs();
-      break;
-    case 'status':
-      cmdStatus(config);
-      break;
-    default:
-      console.error(ANSI.red(`Unknown command: ${command}`));
-      printHelp();
-      process.exit(1);
-  }
+  console.error(ANSI.red(`Unknown command: ${command}`));
+  printHelp();
+  process.exit(1);
 }
 
 if (require.main === module) main();
@@ -1042,12 +717,9 @@ if (require.main === module) main();
 module.exports = {
   stripAnsi, truncStr, modelMeta, modelWarning, modelItem,
   run, checkToolDeps, normalizeProxyUrl, resolveProxy, applyProxy,
-  loadState, saveState, isProcessAlive, cleanupState,
-  configSearchPaths, findConfigFile, loadConfig, validateConfig,
   getModelsPath, loadModels, saveModels,
-  cmdModelList, cmdInit, cmdHooksStatus, cmdLs, cmdStatus, cmdDown,
+  cmdModelList, cmdHooksStatus,
   cmdHooksInstall, cmdHooksRemove,
   getNotifyConfigPath, loadNotifyConfigFile, saveNotifyConfig, cmdNotify,
-  filterInstances,
-  parseArgs, main, ANSI, CONFIG_FILENAME, GLOBAL_CONFIG_DIR, STATE_FILE,
+  parseArgs, main, ANSI, GLOBAL_CONFIG_DIR,
 };

@@ -15,7 +15,6 @@
 - **终端聚焦** — 一键跳转到任意工作进程所在的终端窗口/标签页（支持 iTerm、Terminal.app、VSCode、Cursor、Warp、WezTerm）
 - **会话持久化** — 工作进程在 master 重启后依然存在；会话状态持久化到磁盘并自动恢复
 - **模型配置** — 命名配置文件，可快速启动使用不同模型、API Key 和代理设置的交互式会话
-- **Fleet 模式** — 在配置文件中定义多个实例，作为后台进程进行管理
 - **HTTP 代理** — 支持按配置或按运行设置代理；自动设置 `HTTP_PROXY` 和 `HTTPS_PROXY` 环境变量
 - **交互式界面** — 方向键选择器、确认对话框、多字段输入表单，全部在终端中运行
 - **桌面通知** — 工具完成任务或发送通知时弹出系统通知，支持配置提示音
@@ -54,20 +53,9 @@ fleet start
 # 配置桌面通知
 fleet notify --on
 fleet notify --no-sound
-
-# 或初始化 Fleet 配置以进行多实例管理
-fleet init
-# 编辑 fleet.config.json，填入你的 API Key，然后：
-fleet up
-
-# 列出运行中的实例
-fleet ls
-
-# 停止所有实例
-fleet down
 ```
 
-## 三种模式
+## 两种模式
 
 ### 观察者模式（面板）
 
@@ -90,14 +78,6 @@ fleet down
 - 如果未指定 `--model` 参数，将显示交互式箭头键选择菜单
 - 使用 `--proxy` 通过命令行启用代理，或使用配置中保存的代理地址
 
-### Fleet 模式（后台）
-
-在配置文件中定义多个实例，并将它们作为后台进程进行管理。
-
-- `fleet up` 将每个实例作为独立后台进程启动
-- PID 记录在 `~/.config/claude-code-fleet/fleet-state.json` 中
-- 失效条目（已死亡的 PID）会自动清理
-
 ## 命令
 
 | 命令 | 别名 | 说明 |
@@ -111,87 +91,16 @@ fleet down
 | `fleet model list` | `model ls` | 列出所有已保存的模型配置 |
 | `fleet model edit` | — | 交互式编辑已有的模型配置 |
 | `fleet model delete` | `model rm` | 交互式删除模型配置 |
-| `fleet up` | — | 将所有（或 `--only` 指定的）实例作为后台进程启动 |
-| `fleet down` | `stop` | 停止所有运行中的后台实例 |
-| `fleet restart` | — | 停止然后重新启动所有（或 `--only` 指定的）实例 |
-| `fleet ls` | `list` | 列出当前运行中的后台实例（含 PID 和模型信息） |
-| `fleet status` | — | 显示所有实例的详细配置信息 |
 | `fleet notify` | — | 配置桌面通知（`--on`、`--off`、`--sound`、`--no-sound`） |
-| `fleet init` | — | 在当前目录从模板创建 `fleet.config.json` |
 
 ### 全局选项
 
 | 参数 | 说明 |
 |------|------|
-| `--config <path>` | 使用指定的配置文件，而非自动搜索 |
-| `--only <names>` | 仅操作指定的实例（逗号分隔，用于 `up`/`restart`） |
 | `--model <name>` | 指定模型配置（用于 `run` 命令） |
 | `--cwd <path>` | 设置工作目录（用于 `run` 命令） |
 | `--proxy [url]` | 启用 HTTP 代理；省略 url 时使用配置中保存的代理地址（用于 `run` 命令） |
 | `--tools <names>` | 逗号分隔的工具名称（用于 `hooks install`） |
-
-## 配置
-
-### 配置文件搜索顺序
-
-1. 当前目录下的 `fleet.config.local.json`（已 gitignore，用于本地密钥）
-2. 当前目录下的 `fleet.config.json`
-3. `~/.config/claude-code-fleet/config.json`（全局回退）
-
-### 实例选项
-
-| 字段 | 必填 | 说明 |
-|------|------|------|
-| `name` | 是 | 唯一的实例名称 |
-| `tool` | 否 | 工具类型：`claude`（默认）或 `codex` |
-| `apiKey` | 是 | API Key（Claude 用 Anthropic，Codex 用 OpenAI） |
-| `model` | 否 | 模型 ID（例如 `claude-opus-4-6`、`gpt-5.4`） |
-| `apiBaseUrl` | 否 | 自定义 API 端点 |
-| `cwd` | 否 | 实例的工作目录（不存在时自动创建） |
-| `env` | 否 | 额外的环境变量，以键值对形式 |
-| `args` | 否 | 传递给工具二进制的额外 CLI 参数 |
-| `proxy` | 否 | HTTP 代理 URL（设置 `HTTP_PROXY` 和 `HTTPS_PROXY`） |
-
-### 示例配置
-
-```json
-{
-  "instances": [
-    {
-      "name": "opus-worker",
-      "tool": "claude",
-      "apiKey": "sk-ant-api03-xxxxx",
-      "model": "claude-opus-4-6",
-      "apiBaseUrl": "https://api.anthropic.com",
-      "cwd": "./workspace/opus"
-    },
-    {
-      "name": "sonnet-worker",
-      "tool": "claude",
-      "apiKey": "sk-ant-api03-yyyyy",
-      "model": "claude-sonnet-4-6",
-      "cwd": "./workspace/sonnet"
-    },
-    {
-      "name": "codex-worker",
-      "tool": "codex",
-      "apiKey": "sk-openai-zzzzz",
-      "model": "gpt-5.4",
-      "cwd": "./workspace/codex"
-    },
-    {
-      "name": "custom-endpoint",
-      "apiKey": "your-key",
-      "model": "claude-sonnet-4-6",
-      "apiBaseUrl": "https://your-proxy.example.com/v1",
-      "proxy": "http://127.0.0.1:7890",
-      "env": { "CUSTOM_HEADER": "value" },
-      "args": ["--verbose"],
-      "cwd": "./workspace/custom"
-    }
-  ]
-}
-```
 
 ## 观察者面板
 
@@ -252,17 +161,6 @@ fleet down
 | **WezTerm** | 通过 AppleScript 激活包含该工作进程的窗口 |
 
 如果未授予自动化权限，会显示清晰的错误信息和操作指引。
-
-## Fleet 模式
-
-### 工作原理
-
-1. 读取配置文件获取实例定义
-2. 验证配置（必填字段、名称唯一性）
-3. 检查每个实例所需的工具 CLI（`claude` 和/或 `codex`）是否可用
-4. 将每个实例作为独立后台进程启动，应用配置的模型和环境变量
-5. 在状态文件中跟踪 PID 以进行生命周期管理
-6. 每次操作时自动清理失效条目
 
 ### Hooks
 
@@ -348,7 +246,6 @@ fleet notify --no-sound   # 关闭提示音
 | 路径 | 用途 |
 |------|------|
 | `models.json` | 已保存的模型配置 |
-| `fleet-state.json` | 后台实例 PID（Fleet 模式） |
 | `fleet.sock` | Unix 域套接字（临时的，观察者模式） |
 | `hooks/hook-client.js` | 工具事件的 Hook 脚本 |
 | `hooks/adapters/` | 工具适配器模块（Claude、Codex），由 hook-client 使用 |

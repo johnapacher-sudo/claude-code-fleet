@@ -15,7 +15,6 @@ Run multiple AI coding tool instances with different API keys, models, and endpo
 - **Terminal Focus** — Jump to any worker's terminal window/tab with one keypress (iTerm, Terminal.app, VSCode, Cursor, Warp, WezTerm)
 - **Session Persistence** — Workers survive master restarts; session state is persisted to disk and auto-resumed
 - **Model Profiles** — Named profiles for quick interactive sessions with different models, API keys, and proxy settings
-- **Fleet Mode** — Define multiple instances in a config file and manage them as background processes
 - **HTTP Proxy** — Per-profile or per-run proxy support; auto-sets `HTTP_PROXY` and `HTTPS_PROXY` environment variables
 - **Interactive UI** — Arrow-key selectors, confirmation dialogs, and multi-field input forms, all in the terminal
 - **Desktop Notifications** — System notifications when a tool finishes a task or sends a notification, with configurable sound
@@ -54,20 +53,9 @@ fleet start
 # Configure desktop notifications
 fleet notify --on
 fleet notify --no-sound
-
-# Or initialize fleet config for multi-instance management
-fleet init
-# Edit fleet.config.json with your API keys, then:
-fleet up
-
-# List running instances
-fleet ls
-
-# Stop all instances
-fleet down
 ```
 
-## Three Modes
+## Two Modes
 
 ### Observer Mode (Dashboard)
 
@@ -90,14 +78,6 @@ Manage named model profiles and launch single interactive AI coding sessions.
 - If no `--model` flag is given, an interactive arrow-key menu appears
 - Use `--proxy` to enable proxy via CLI, or rely on the profile's saved proxy URL
 
-### Fleet Mode (Background)
-
-Define multiple instances in a config file and manage them as background processes.
-
-- `fleet up` spawns each instance as a detached background process
-- PIDs are tracked in `~/.config/claude-code-fleet/fleet-state.json`
-- Stale entries (dead PIDs) are cleaned up automatically
-
 ## Commands
 
 | Command | Aliases | Description |
@@ -111,87 +91,16 @@ Define multiple instances in a config file and manage them as background process
 | `fleet model list` | `model ls` | List all saved model profiles |
 | `fleet model edit` | — | Interactively edit an existing model profile |
 | `fleet model delete` | `model rm` | Interactively delete a model profile |
-| `fleet up` | — | Launch all (or `--only`) instances as background processes |
-| `fleet down` | `stop` | Stop all running background instances |
-| `fleet restart` | — | Stop then start all (or `--only`) instances |
-| `fleet ls` | `list` | List currently running background instances with PID and model |
-| `fleet status` | — | Show detailed configuration for all instances |
 | `fleet notify` | — | Configure desktop notifications (`--on`, `--off`, `--sound`, `--no-sound`) |
-| `fleet init` | — | Create `fleet.config.json` from template in the current directory |
 
 ### Global Options
 
 | Flag | Description |
 |------|-------------|
-| `--config <path>` | Use a specific config file instead of auto-searching |
-| `--only <names>` | Target only specific named instances (comma-separated, for `up`/`restart`) |
 | `--model <name>` | Specify model profile (for `run` command) |
 | `--cwd <path>` | Set working directory (for `run` command) |
 | `--proxy [url]` | Enable HTTP proxy; uses profile's saved proxy URL if url omitted (for `run` command) |
 | `--tools <names>` | Comma-separated tool names to target (for `hooks install`) |
-
-## Configuration
-
-### Config file search order
-
-1. `fleet.config.local.json` in the current directory (gitignored, for local secrets)
-2. `fleet.config.json` in the current directory
-3. `~/.config/claude-code-fleet/config.json` (global fallback)
-
-### Instance options
-
-| Field | Required | Description |
-|-------|----------|-------------|
-| `name` | Yes | Unique instance name |
-| `tool` | No | Tool type: `claude` (default) or `codex` |
-| `apiKey` | Yes | API key (Anthropic for Claude, OpenAI for Codex) |
-| `model` | No | Model ID (e.g., `claude-opus-4-6`, `gpt-5.4`) |
-| `apiBaseUrl` | No | Custom API endpoint |
-| `cwd` | No | Working directory for the instance (created if missing) |
-| `env` | No | Additional environment variables as key-value pairs |
-| `args` | No | Extra CLI arguments passed to the tool binary |
-| `proxy` | No | HTTP proxy URL (sets `HTTP_PROXY` and `HTTPS_PROXY`) |
-
-### Example Config
-
-```json
-{
-  "instances": [
-    {
-      "name": "opus-worker",
-      "tool": "claude",
-      "apiKey": "sk-ant-api03-xxxxx",
-      "model": "claude-opus-4-6",
-      "apiBaseUrl": "https://api.anthropic.com",
-      "cwd": "./workspace/opus"
-    },
-    {
-      "name": "sonnet-worker",
-      "tool": "claude",
-      "apiKey": "sk-ant-api03-yyyyy",
-      "model": "claude-sonnet-4-6",
-      "cwd": "./workspace/sonnet"
-    },
-    {
-      "name": "codex-worker",
-      "tool": "codex",
-      "apiKey": "sk-openai-zzzzz",
-      "model": "gpt-5.4",
-      "cwd": "./workspace/codex"
-    },
-    {
-      "name": "custom-endpoint",
-      "apiKey": "your-key",
-      "model": "claude-sonnet-4-6",
-      "apiBaseUrl": "https://your-proxy.example.com/v1",
-      "proxy": "http://127.0.0.1:7890",
-      "env": { "CUSTOM_HEADER": "value" },
-      "args": ["--verbose"],
-      "cwd": "./workspace/custom"
-    }
-  ]
-}
-```
 
 ## Observer Dashboard
 
@@ -252,17 +161,6 @@ Press Enter on any worker to jump to its terminal window/tab. Supported terminal
 | **WezTerm** | Raises the window containing the worker via AppleScript |
 
 If automation permission is not granted, you'll get a clear error message with instructions.
-
-## Fleet Mode
-
-### How It Works
-
-1. Reads config file for instance definitions
-2. Validates configuration (required fields, duplicate names)
-3. Checks for the required tool CLI (`claude` and/or `codex`) per instance
-4. Spawns each instance as a detached background process with the configured model and environment
-5. Tracks PIDs in a state file for lifecycle management
-6. Automatically cleans up stale entries on every operation
 
 ### Hooks
 
@@ -348,7 +246,6 @@ All state is stored under `~/.config/claude-code-fleet/`:
 | Path | Purpose |
 |------|---------|
 | `models.json` | Saved model profiles |
-| `fleet-state.json` | Background instance PIDs (Fleet mode) |
 | `fleet.sock` | Unix domain socket (transient, Observer mode) |
 | `hooks/hook-client.js` | Hook script for tool events |
 | `hooks/adapters/` | Tool adapter modules (Claude, Codex) used by hook-client |

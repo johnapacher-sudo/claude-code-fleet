@@ -51,6 +51,7 @@ describe('CodexAdapter', () => {
       expect(args).toContain('gpt-4o');
       expect(args).toContain('-c');
       expect(args).toContain('approval_policy="never"');
+      expect(args).toContain('sandbox_mode="danger-full-access"');
     });
 
     it('appends entry.args if present', () => {

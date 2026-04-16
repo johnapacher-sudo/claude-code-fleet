@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 // ─── Pure function tests (no mocking needed) ────────────────────────────────
 
@@ -6,8 +6,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const mod = await import('../src/index.js');
 const {
   stripAnsi, truncStr, modelMeta, modelWarning, modelItem,
-  ANSI, CONFIG_FILENAME, GLOBAL_CONFIG_DIR, STATE_FILE,
-  configSearchPaths, validateConfig, isProcessAlive, getModelsPath, parseArgs,
+  ANSI, GLOBAL_CONFIG_DIR, getModelsPath, parseArgs,
   normalizeProxyUrl, resolveProxy, applyProxy,
 } = mod;
 
@@ -65,9 +64,7 @@ describe('modelItem', () => {
 });
 
 describe('Constants', () => {
-  it('CONFIG_FILENAME', () => expect(CONFIG_FILENAME).toBe('fleet.config.json'));
   it('GLOBAL_CONFIG_DIR', () => expect(GLOBAL_CONFIG_DIR).toContain('.config/claude-code-fleet'));
-  it('STATE_FILE', () => expect(STATE_FILE).toContain('fleet-state.json'));
 });
 
 describe('ANSI', () => {
@@ -76,37 +73,12 @@ describe('ANSI', () => {
   it('red', () => expect(ANSI.red('x')).toBe('\x1b[31mx\x1b[0m'));
 });
 
-describe('validateConfig', () => {
-  it('rejects non-array', () => {
-    const e = validateConfig({ instances: 'x' });
-    expect(e).toHaveLength(1);
-    expect(e[0]).toContain('must be a non-empty array');
-  });
-  it('rejects empty', () => expect(validateConfig({ instances: [] })[0]).toContain('must be a non-empty array'));
-  it('rejects no name', () => expect(validateConfig({ instances: [{ apiKey: 'k' }] }).some(e => e.includes('"name" is required'))).toBe(true));
-  it('rejects no apiKey', () => expect(validateConfig({ instances: [{ name: 'a' }] }).some(e => e.includes('"apiKey" is required'))).toBe(true));
-  it('rejects dup names', () => expect(validateConfig({ instances: [{ name: 'd', apiKey: 'k1' }, { name: 'd', apiKey: 'k2' }] }).some(e => e.includes('duplicate'))).toBe(true));
-  it('accepts valid', () => expect(validateConfig({ instances: [{ name: 'w1', apiKey: 'k' }] })).toEqual([]));
-});
-
-describe('configSearchPaths', () => {
-  it('returns 3 paths', () => expect(configSearchPaths()).toHaveLength(3));
-});
-
-describe('isProcessAlive', () => {
-  it('alive for self', () => expect(isProcessAlive(process.pid)).toBe(true));
-  it('dead for fake pid', () => expect(isProcessAlive(99999999)).toBe(false));
-});
-
 describe('getModelsPath', () => {
   it('contains models.json', () => expect(getModelsPath()).toContain('models.json'));
 });
 
 describe('parseArgs', () => {
-  it('init', () => { const r = parseArgs(['init']); expect(r.command).toBe('init'); expect(r.subcommand).toBeUndefined(); });
   it('model add', () => expect(parseArgs(['model', 'add']).subcommand).toBe('add'));
-  it('--config', () => expect(parseArgs(['--config', 'x.json']).opts.config).toBe('x.json'));
-  it('--only array', () => expect(parseArgs(['--only', 'a,b']).opts.only).toEqual(['a', 'b']));
   it('--help', () => expect(parseArgs(['--help']).opts.help).toBe(true));
   it('-h', () => expect(parseArgs(['-h']).opts.help).toBe(true));
   it('--version', () => expect(parseArgs(['--version']).opts.version).toBe(true));
@@ -130,58 +102,6 @@ describe('parseArgs', () => {
     expect(r.opts.model).toBe('opus');
     expect(r.opts.proxy).toBe('socks5://1.2.3.4:1080');
     expect(r.opts.cwd).toBe('/tmp');
-  });
-});
-
-describe('filterInstances', () => {
-  const inst = [{ name: 'w1', apiKey: 'k1' }, { name: 'w2', apiKey: 'k2' }, { name: 'w3', apiKey: 'k3' }];
-
-  it('returns all when no filter', () => {
-    expect(mod.filterInstances(inst, null)).toEqual(inst);
-    expect(mod.filterInstances(inst, [])).toEqual(inst);
-  });
-  it('filters by name', () => {
-    const r = mod.filterInstances(inst, ['w1']);
-    expect(r).toHaveLength(1);
-    expect(r[0].name).toBe('w1');
-  });
-  it('warns on unknown', () => {
-    const s = vi.spyOn(console, 'error').mockImplementation(() => {});
-    mod.filterInstances(inst, ['w1', 'ghost']);
-    expect(s).toHaveBeenCalledWith(expect.stringContaining('unknown instances'));
-    s.mockRestore();
-  });
-  it('exits on no match', () => {
-    const s = vi.spyOn(process, 'exit').mockImplementation(() => { throw new Error('exit'); });
-    const e = vi.spyOn(console, 'error').mockImplementation(() => {});
-    expect(() => mod.filterInstances(inst, ['nope'])).toThrow('exit');
-    s.mockRestore(); e.mockRestore();
-  });
-});
-
-describe('cmdStatus', () => {
-  it('shows details', () => {
-    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-    mod.cmdStatus({ instances: [{ name: 'w1', apiKey: 'k', model: 'opus' }] });
-    const out = log.mock.calls.flat().join(' ');
-    expect(out).toContain('w1');
-    expect(out).toContain('opus');
-    log.mockRestore();
-  });
-  it('shows proxy when configured', () => {
-    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-    mod.cmdStatus({ instances: [{ name: 'w1', apiKey: 'k', model: 'opus', proxy: 'http://127.0.0.1:7890' }] });
-    const out = log.mock.calls.flat().join(' ');
-    expect(out).toContain('proxy:');
-    expect(out).toContain('http://127.0.0.1:7890');
-    log.mockRestore();
-  });
-  it('omits proxy line when not configured', () => {
-    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-    mod.cmdStatus({ instances: [{ name: 'w1', apiKey: 'k', model: 'opus' }] });
-    const out = log.mock.calls.flat().join(' ');
-    expect(out).not.toContain('proxy:');
-    log.mockRestore();
   });
 });
 

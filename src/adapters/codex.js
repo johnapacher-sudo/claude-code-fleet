@@ -20,7 +20,11 @@ class CodexAdapter extends ToolAdapter {
   get hookEvents() { return ['SessionStart', 'PostToolUse', 'Stop']; }
 
   buildArgs(entry) {
-    const args = ['--model', entry.model, '-c', 'approval_policy="never"'];
+    const args = [
+      '--model', entry.model,
+      '-c', 'approval_policy="never"',
+      '-c', 'sandbox_mode="danger-full-access"',
+    ];
     if (entry.apiBaseUrl) args.push('-c', `openai_base_url=${JSON.stringify(entry.apiBaseUrl)}`);
     if (entry.args) args.push(...entry.args);
     return args;
