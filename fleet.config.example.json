@@ -2,6 +2,7 @@
   "instances": [
     {
       "name": "opus-worker",
+      "tool": "claude",
       "apiKey": "sk-ant-api03-xxxxx",
       "model": "claude-opus-4-6",
       "apiBaseUrl": "https://api.anthropic.com",
@@ -9,16 +10,18 @@
     },
     {
       "name": "sonnet-worker",
+      "tool": "claude",
       "apiKey": "sk-ant-api03-yyyyy",
       "model": "claude-sonnet-4-6",
       "apiBaseUrl": "https://api.anthropic.com",
       "cwd": "./workspace/sonnet"
     },
     {
-      "name": "haiku-worker",
-      "apiKey": "sk-ant-api03-zzzzz",
-      "model": "claude-haiku-4-5-20251001",
-      "cwd": "./workspace/haiku"
+      "name": "codex-worker",
+      "tool": "codex",
+      "apiKey": "sk-openai-zzzzz",
+      "model": "gpt-5.4",
+      "cwd": "./workspace/codex"
     },
     {
       "name": "custom-endpoint",

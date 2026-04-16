@@ -213,6 +213,9 @@ function validateConfig(config) {
     if (!inst.apiKey || typeof inst.apiKey !== 'string') {
       errors.push(`${prefix}: "apiKey" is required`);
     }
+    if (inst.tool && !registry.get(inst.tool)) {
+      errors.push(`${prefix}: unknown tool "${inst.tool}" (available: ${registry.all().map(a => a.name).join(', ')})`);
+    }
   });
   return errors;
 }
@@ -269,19 +272,41 @@ async function selectFromList(items, label, dangerMode = false) {
 
 // ─── Model commands ──────────────────────────────────────────────────────────
 
-async function cmdModelAdd() {
+async function cmdModelAdd(toolName) {
+  if (!toolName) {
+    const toolItems = registry.all().map(a => ({
+      label: a.displayName,
+      detail: a.binary,
+      value: a.name,
+    }));
+    toolName = await selectFromList(toolItems, 'Select a tool type');
+    if (!toolName) return;
+  }
+
+  const adapter = registry.get(toolName);
+  if (!adapter) {
+    console.error(ANSI.red(`Unknown tool: ${toolName}`));
+    process.exit(1);
+  }
+
+  const placeholders = {
+    modelId: toolName === 'codex' ? 'e.g. gpt-5.4' : 'e.g. claude-opus-4-6',
+    apiKey: toolName === 'codex' ? 'sk-...' : 'sk-ant-...',
+    apiBaseUrl: toolName === 'codex' ? 'https://api.openai.com/v1' : 'https://api.anthropic.com',
+  };
+
   const selectorPath = path.join(__dirname, 'components', 'selector.mjs');
   const inputMod = await import(selectorPath);
   const allRequired = ['Name', 'Model ID', 'API Key', 'API Base URL'];
 
   while (true) {
     const created = await inputMod.renderInput({
-      title: 'Add a new model profile',
+      title: `Add a new ${adapter.displayName} model profile`,
       fields: [
         { label: 'Name', value: '', placeholder: 'e.g. opus-prod' },
-        { label: 'Model ID', value: '', placeholder: 'e.g. claude-opus-4-6' },
-        { label: 'API Key', value: '', placeholder: 'sk-ant-...' },
-        { label: 'API Base URL', value: '', placeholder: 'https://api.anthropic.com' },
+        { label: 'Model ID', value: '', placeholder: placeholders.modelId },
+        { label: 'API Key', value: '', placeholder: placeholders.apiKey },
+        { label: 'API Base URL', value: '', placeholder: placeholders.apiBaseUrl },
         { label: 'Proxy URL', value: '', placeholder: 'http://127.0.0.1:7890 (optional)' },
       ],
       requiredFields: allRequired,
@@ -289,7 +314,6 @@ async function cmdModelAdd() {
 
     if (!created) return; // cancelled
 
-    // Show confirmation
     const key = truncStr(created['API Key'], 12) + '...';
     const endpoint = truncStr(created['API Base URL'], 32);
     const proxyDisplay = created['Proxy URL'] ? ` \u00B7 proxy: ${truncStr(created['Proxy URL'], 32)}` : '';
@@ -313,6 +337,7 @@ async function cmdModelAdd() {
 
     data.models.push({
       name: created.Name,
+      tool: toolName,
       model: created['Model ID'] || undefined,
       apiKey: created['API Key'] || undefined,
       apiBaseUrl: created['API Base URL'] || undefined,
@@ -510,6 +535,7 @@ function cmdInit() {
         instances: [
           {
             name: 'worker-1',
+            tool: 'claude',
             apiKey: 'your-api-key-here',
             model: 'claude-sonnet-4-6',
           },
@@ -616,46 +642,68 @@ function cmdDown() {
   console.log('\nFleet stopped.');
 }
 
-function cmdHooksInstall() {
-  const { ensureHooks } = require('./master');
-  ensureHooks();
-  console.log(ANSI.green('Fleet hooks installed to ~/.claude/settings.json'));
+function cmdHooksInstall(toolsFilter) {
+  if (toolsFilter) {
+    const toolNames = toolsFilter.split(',');
+    const HOOKS_DIR = path.join(GLOBAL_CONFIG_DIR, 'hooks');
+    const HOOK_CLIENT_DST = path.join(HOOKS_DIR, 'hook-client.js');
+    if (!fs.existsSync(HOOKS_DIR)) fs.mkdirSync(HOOKS_DIR, { recursive: true });
+    fs.copyFileSync(path.join(__dirname, 'hook-client.js'), HOOK_CLIENT_DST);
+    const adaptersSrc = path.join(__dirname, 'adapters');
+    const adaptersDst = path.join(HOOKS_DIR, 'adapters');
+    if (!fs.existsSync(adaptersDst)) fs.mkdirSync(adaptersDst, { recursive: true });
+    for (const file of ['base.js', 'claude.js', 'codex.js', 'registry.js', 'index.js']) {
+      const src = path.join(adaptersSrc, file);
+      if (fs.existsSync(src)) fs.copyFileSync(src, path.join(adaptersDst, file));
+    }
+    for (const t of toolNames) {
+      const adapter = registry.get(t.trim());
+      if (!adapter) {
+        console.error(ANSI.red(`Unknown tool: ${t.trim()}`));
+        continue;
+      }
+      if (!adapter.isInstalled()) {
+        console.error(ANSI.yellow(`${adapter.displayName} not installed, skipping.`));
+        continue;
+      }
+      adapter.installHooks(HOOK_CLIENT_DST);
+      console.log(ANSI.green(`Fleet hooks installed for ${adapter.displayName}`));
+    }
+  } else {
+    const { ensureHooks } = require('./master');
+    ensureHooks();
+    const installedNames = registry.installed().map(a => a.displayName).join(', ');
+    console.log(ANSI.green(`Fleet hooks installed for: ${installedNames || 'none (no tools detected)'}`));
+  }
 }
 
 function cmdHooksRemove() {
   const { removeHooks } = require('./master');
   removeHooks();
-  console.log(ANSI.green('Fleet hooks removed from ~/.claude/settings.json'));
+  const allNames = registry.all().map(a => a.displayName).join(', ');
+  console.log(ANSI.green(`Fleet hooks removed for: ${allNames}`));
 }
 
 function cmdHooksStatus() {
-  const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
-  if (!fs.existsSync(settingsPath)) {
-    console.log(ANSI.yellow('No ~/.claude/settings.json found'));
-    return;
-  }
-  let settings = {};
-  try {
-    settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-  } catch {
-    console.log(ANSI.red('Cannot parse ~/.claude/settings.json'));
-    return;
-  }
-
-  const events = ['SessionStart', 'PostToolUse', 'Stop', 'Notification'];
   console.log(ANSI.bold('\nFleet Hooks Status:\n'));
-  for (const evt of events) {
-    const groups = (settings.hooks && settings.hooks[evt]) || [];
-    const fleetCount = groups.filter(
-      g => (g.hooks || []).some(h => h.command && h.command.includes('claude-code-fleet'))
-    ).length;
-    if (fleetCount > 0) {
-      console.log(`  ${ANSI.green('✓')} ${evt}: ${fleetCount} fleet hook(s)`);
+
+  for (const adapter of registry.all()) {
+    const isInst = adapter.isInstalled();
+    const hookOk = typeof adapter.isHookInstalled === 'function' ? adapter.isHookInstalled() : false;
+
+    console.log(`  ${ANSI.bold(adapter.displayName)} (${adapter.binary}):`);
+    if (!isInst) {
+      console.log(`    ${ANSI.yellow('\u26A0')} CLI not installed`);
+    } else if (hookOk) {
+      console.log(`    ${ANSI.green('\u2713')} Hooks installed`);
+      for (const evt of adapter.hookEvents) {
+        console.log(`      ${ANSI.green('\u2713')} ${evt}`);
+      }
     } else {
-      console.log(`  ${ANSI.red('✗')} ${evt}: not installed`);
+      console.log(`    ${ANSI.red('\u2717')} Hooks not installed`);
     }
+    console.log();
   }
-  console.log();
 }
 
 // ─── Notify commands ──────────────────────────────────────────────────────
@@ -796,6 +844,8 @@ function parseArgs(argv) {
       } else {
         opts.proxy = true;
       }
+    } else if (arg === '--tools' && argv[i + 1]) {
+      opts.tools = argv[++i];
     } else if (arg === '--version' || arg === '-v' || arg === '-V') {
       opts.version = true;
     } else if (arg === '--help' || arg === '-h') {
@@ -817,18 +867,18 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-  console.log(`${ANSI.bold('Claude Code Fleet')} — Observe multiple Claude Code processes
+  console.log(`${ANSI.bold('Claude Code Fleet')} — Manage multiple AI coding tool processes
 
 ${ANSI.bold('Usage:')}
   fleet [command] [options]
 
 ${ANSI.bold('Commands:')}
-  run                 Start Claude Code with a model profile
+  run                 Start a tool with a model profile
   start               Start fleet observer (TUI dashboard)
-  hooks install       Install fleet hooks to ~/.claude/settings.json
-  hooks remove        Remove fleet hooks from ~/.claude/settings.json
-  hooks status        Show current hook installation status
-  model add           Add a new model profile
+  hooks install       Install fleet hooks for all detected tools
+  hooks remove        Remove fleet hooks for all tools
+  hooks status        Show current hook installation status per tool
+  model add [tool]    Add a new model profile (claude, codex)
   model list          List all model profiles
   model edit          Edit a model profile (interactive)
   model delete        Delete a model profile (interactive)
@@ -840,21 +890,29 @@ ${ANSI.bold('Commands:')}
   init                Create a fleet.config.json from template
   notify              Configure desktop notifications
 
+${ANSI.bold('Supported Tools:')}
+  claude              Claude Code (anthropic)
+  codex               Codex CLI (openai)
+
 ${ANSI.bold('Options:')}
   --config <path>   Use specific config file
   --only <names>    Comma-separated instance names to target
   --model <name>    Model profile name (for run command)
   --cwd <path>      Working directory (for run command)
   --proxy [url]     Enable HTTP proxy (uses profile proxy if url omitted)
+  --tools <names>   Comma-separated tool names (for hooks install)
   -v, --version     Show version number
   -h, --help        Show this help
 
 ${ANSI.bold('Examples:')}
   fleet start                       # Start observer dashboard
-  fleet run --model opus-prod       # Start Claude Code with a model profile
+  fleet run --model opus-prod       # Start with a model profile
   fleet run --proxy                 # Enable proxy using profile's saved proxy URL
   fleet run --proxy http://127.0.0.1:7890  # Enable proxy with explicit URL
   fleet hooks status                # Check hook installation status
+  fleet hooks install --tools codex # Install hooks for Codex only
+  fleet model add claude            # Add a Claude model profile
+  fleet model add codex             # Add a Codex model profile
   fleet model add                   # Add a model profile interactively
   fleet up                          # Start all instances (background)
   fleet notify                      # Show notification config
@@ -888,7 +946,7 @@ function main() {
     const modelCmd = subcommand || 'list';
     switch (modelCmd) {
       case 'add':
-        cmdModelAdd();
+        cmdModelAdd(args[0]);
         break;
       case 'list':
       case 'ls':
@@ -929,7 +987,7 @@ function main() {
     const hooksCmd = subcommand || 'status';
     switch (hooksCmd) {
       case 'install':
-        cmdHooksInstall();
+        cmdHooksInstall(opts.tools);
         break;
       case 'remove':
         cmdHooksRemove();

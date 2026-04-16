@@ -6,6 +6,11 @@ import { TERMINAL_NAMES } from './terminal-focus.mjs';
 
 const h = React.createElement;
 
+const TOOL_COLORS = {
+  claude: '#a78bfa',
+  codex: '#4ade80',
+};
+
 function getStatusIcon(status) {
   if (status === 'active') return { icon: '\u25CF', color: colors.running };
   if (status === 'thinking') return { icon: '\u25CF', color: colors.spinnerColor, spinning: true };
@@ -167,6 +172,9 @@ export function WorkerCard({ worker, now, isExpanded = false }) {
         statusIcon.spinning
           ? h(Text, { color: statusIcon.color }, h(Spinner, { type: 'dots' }), ' ')
           : h(Text, { color: statusIcon.color }, statusIcon.icon),
+        worker.tool && worker.tool !== 'claude'
+          ? h(Text, { color: TOOL_COLORS[worker.tool] || colors.idle }, `[${worker.tool.charAt(0).toUpperCase() + worker.tool.slice(1)}] `)
+          : null,
         h(Text, { color: colors.projectName, bold: true }, worker.displayName),
         worker.fleetModelName
           ? h(Text, { color: colors.modelAlias }, worker.fleetModelName)
