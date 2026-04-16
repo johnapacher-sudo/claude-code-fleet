@@ -286,8 +286,9 @@ function InputForm({ title, fields, values: initialValues, requiredFields, onSub
     }
 
     // Backspace: delete char before cursor
-    // Check key.backspace + raw codes (\x7f DEL, \x08 BS) for terminal compatibility
-    if (key.backspace || input === '\x7f' || input === '\x08') {
+    // Combine key.backspace + key.delete + raw codes for terminal compatibility
+    // (Cursor terminal maps Backspace to key.delete instead of key.backspace)
+    if (key.backspace || key.delete || input === '\x7f' || input === '\x08') {
       setFormValues(prev => {
         const val = prev[label] || '';
         const pos = cursorPositions[label] !== undefined ? cursorPositions[label] : val.length;
@@ -297,20 +298,6 @@ function InputForm({ title, fields, values: initialValues, requiredFields, onSub
       setCursorPositions(prev => {
         const pos = prev[label] !== undefined ? prev[label] : (formValues[label] || '').length;
         return { ...prev, [label]: Math.max(0, pos - 1) };
-      });
-      if (validationErrors[label]) {
-        setValidationErrors(prev => { const n = { ...prev }; delete n[label]; return n; });
-      }
-      return;
-    }
-
-    // Delete key: delete char at cursor
-    if (key.delete || input === '\x1b[3~') {
-      setFormValues(prev => {
-        const val = prev[label] || '';
-        const pos = cursorPositions[label] !== undefined ? cursorPositions[label] : val.length;
-        if (pos >= val.length) return prev;
-        return { ...prev, [label]: val.slice(0, pos) + val.slice(pos + 1) };
       });
       if (validationErrors[label]) {
         setValidationErrors(prev => { const n = { ...prev }; delete n[label]; return n; });
