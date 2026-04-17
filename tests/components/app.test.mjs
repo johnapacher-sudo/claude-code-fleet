@@ -71,6 +71,45 @@ describe('getWorkerStatus logic (via source)', () => {
     expect(src).toContain('parseInt');
   });
 
+  it('handles daemon control keys d/p/+/-/a', async () => {
+    const fs = await import('fs');
+    const src = fs.default.readFileSync(new URL('../../src/components/app.mjs', import.meta.url), 'utf-8');
+    expect(src).toContain("input === 'd'");
+    expect(src).toContain("input === 'p'");
+    expect(src).toContain("input === '+'");
+    expect(src).toContain("input === '-'");
+    expect(src).toContain("input === 'a'");
+  });
+
+  it('has input mode handling for Escape/Return/Backspace', async () => {
+    const fs = await import('fs');
+    const src = fs.default.readFileSync(new URL('../../src/components/app.mjs', import.meta.url), 'utf-8');
+    expect(src).toContain('key.escape');
+    expect(src).toContain('key.backspace');
+    expect(src).toContain('inputMode');
+    expect(src).toContain('setInputMode');
+    expect(src).toContain('inputValue');
+    expect(src).toContain('setInputValue');
+  });
+
+  it('calls daemon control methods on master', async () => {
+    const fs = await import('fs');
+    const src = fs.default.readFileSync(new URL('../../src/components/app.mjs', import.meta.url), 'utf-8');
+    expect(src).toContain('master.getDaemonState');
+    expect(src).toContain('master.startWorkerDaemon');
+    expect(src).toContain('master.stopWorkerDaemon');
+    expect(src).toContain('master.pauseWorkerDaemon');
+    expect(src).toContain('master.setDaemonConcurrency');
+    expect(src).toContain('master.addWorkerTask');
+  });
+
+  it('renders WorkerDaemonBar component', async () => {
+    const fs = await import('fs');
+    const src = fs.default.readFileSync(new URL('../../src/components/app.mjs', import.meta.url), 'utf-8');
+    expect(src).toContain('WorkerDaemonBar');
+    expect(src).toContain('daemonState');
+  });
+
   it('calls master.stop on q', async () => {
     const fs = await import('fs');
     const src = fs.default.readFileSync(new URL('../../src/components/app.mjs', import.meta.url), 'utf-8');

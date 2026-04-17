@@ -4,6 +4,7 @@ import { Header } from './header.mjs';
 import { WorkerCard } from './worker-card.mjs';
 import { WorkerQueueCard } from './worker-queue-card.mjs';
 import { Footer } from './footer.mjs';
+import { WorkerDaemonBar } from './worker-daemon-bar.mjs';
 import { colors } from './colors.mjs';
 import { focusTerminal } from './terminal-focus.mjs';
 
@@ -45,6 +46,8 @@ function App({ master }) {
   const [sortMode, setSortMode] = useState('time');
   const [expanded, setExpanded] = useState(new Set());
   const [focusStatus, setFocusStatus] = useState(null);
+  const [inputMode, setInputMode] = useState(false);
+  const [inputValue, setInputValue] = useState('');
   const focusTimerRef = useRef(null);
 
   // Re-render on master data changes
@@ -92,6 +95,33 @@ function App({ master }) {
       master.stop();
       return;
     }
+
+    // Input mode: capture text for adding tasks
+    if (inputMode) {
+      if (key.escape) {
+        setInputMode(false);
+        setInputValue('');
+        return;
+      }
+      if (key.return) {
+        if (inputValue.trim()) {
+          master.addWorkerTask(inputValue.trim());
+        }
+        setInputMode(false);
+        setInputValue('');
+        return;
+      }
+      if (key.backspace || key.delete) {
+        setInputValue(v => v.slice(0, -1));
+        return;
+      }
+      // Append printable characters
+      if (input && !key.ctrl && !key.meta) {
+        setInputValue(v => v + input);
+      }
+      return; // Don't process other keys in input mode
+    }
+
     if (key.downArrow || input === 'j') {
       setSelectedIdx(i => Math.min(i + 1, workers.length - 1));
     }
@@ -100,6 +130,45 @@ function App({ master }) {
     }
     if (key.tab) {
       setSortMode(m => m === 'time' ? 'name' : 'time');
+    }
+    // d: toggle daemon start/stop
+    if (input === 'd') {
+      const state = master.getDaemonState();
+      if (state.running) {
+        master.stopWorkerDaemon();
+      } else {
+        master.startWorkerDaemon(state.concurrency);
+      }
+      setTick(t => t + 1);
+    }
+    // p: pause/resume daemon
+    if (input === 'p') {
+      const state = master.getDaemonState();
+      if (state.running) {
+        master.pauseWorkerDaemon(!state.paused);
+        setTick(t => t + 1);
+      }
+    }
+    // +: increase concurrency
+    if (input === '+' || input === '=') {
+      const state = master.getDaemonState();
+      if (state.running) {
+        master.setDaemonConcurrency(state.concurrency + 1);
+        setTick(t => t + 1);
+      }
+    }
+    // -: decrease concurrency
+    if (input === '-') {
+      const state = master.getDaemonState();
+      if (state.running && state.concurrency > 1) {
+        master.setDaemonConcurrency(state.concurrency - 1);
+        setTick(t => t + 1);
+      }
+    }
+    // a: enter add-task input mode
+    if (input === 'a') {
+      setInputMode(true);
+      setInputValue('');
     }
     // Space: expand/collapse worker details
     if (input === ' ') {
@@ -146,8 +215,11 @@ function App({ master }) {
   const autoOffset = observerWorkers.length;
   const allWorkersEmpty = observerWorkers.length === 0 && autoWorkers.length === 0;
 
+  const daemonState = master.getDaemonState ? master.getDaemonState() : { running: false, pid: null, paused: false, concurrency: 1 };
+
   return h(Box, { flexDirection: 'column' },
     h(Header, { workers }),
+    h(WorkerDaemonBar, { daemonState, inputMode, inputValue, queueStats: workerQueueInfo }),
     h(Box, { flexDirection: 'column', paddingTop: 1 },
       // Observer Workers section
       observerWorkers.length > 0

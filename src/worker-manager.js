@@ -16,12 +16,14 @@ class WorkerManager {
     this.store = store;
     this.concurrency = options.concurrency ?? 1;
     this.pollInterval = options.pollInterval ?? 5;
-    this.timeout = options.timeout ?? 600;
+    this.timeout = options.timeout ?? 10800;
     this.onTaskEvent = options.onTaskEvent ?? null;
+    this.defaultModel = options.defaultModel ?? null;
 
     this.runner = options.runner ?? new WorkerRunner({ timeout: this.timeout });
     this.running = false;
     this._intervalRef = null;
+    this._paused = false;
 
     // Initialize pool: array of N slots, each idle
     this.pool = [];
@@ -31,6 +33,9 @@ class WorkerManager {
 
     // Recover any tasks that were running (e.g. from a previous crash)
     this._recoverRunningTasks();
+
+    // Read control file for initial pause/concurrency state
+    this._readControlFile();
   }
 
   // ─── Lifecycle ────────────────────────────────────────────────────────────
@@ -41,6 +46,9 @@ class WorkerManager {
     // Write PID file
     const pidPath = path.join(this.store.baseDir, 'worker.pid');
     fs.writeFileSync(pidPath, String(process.pid), 'utf8');
+
+    // Write initial control file
+    this._writeControlFile({ paused: false, concurrency: this.concurrency });
 
     // Fire first tick immediately (not awaited)
     this.tick();
@@ -72,6 +80,10 @@ class WorkerManager {
   // ─── Scheduler tick ───────────────────────────────────────────────────────
 
   async tick() {
+    // Read control file for pause/concurrency updates
+    this._readControlFile();
+    if (this._paused) return; // Don't pick new tasks; in-flight tasks continue
+
     for (let i = 0; i < this.pool.length; i++) {
       if (!this.pool[i].idle) continue;
 
@@ -100,8 +112,8 @@ class WorkerManager {
     this._emit('taskStarted', { taskId: task.id, slotIdx });
 
     try {
-      // Resolve model config from profile name
-      const modelConfig = this._resolveModelConfig(task.modelProfile);
+      // Resolve model config from profile name (fallback to daemon default)
+      const modelConfig = this._resolveModelConfig(task.modelProfile || this.defaultModel);
 
       // Run the task
       const result = await this.runner.run(task, modelConfig);
@@ -213,6 +225,47 @@ class WorkerManager {
         });
       }
     }
+  }
+
+  // ─── Control file ───────────────────────────────────────────────────────
+
+  _getControlPath() {
+    return path.join(this.store.baseDir, 'worker-control.json');
+  }
+
+  _readControlFile() {
+    try {
+      const data = JSON.parse(fs.readFileSync(this._getControlPath(), 'utf8'));
+      if (data.paused !== undefined) this._paused = !!data.paused;
+      if (typeof data.concurrency === 'number' && data.concurrency > 0) {
+        this._adjustConcurrency(data.concurrency);
+      }
+    } catch {
+      // File not found or invalid — keep current state
+    }
+  }
+
+  _writeControlFile(updates) {
+    const controlPath = this._getControlPath();
+    let existing = {};
+    try { existing = JSON.parse(fs.readFileSync(controlPath, 'utf8')); } catch {}
+    Object.assign(existing, updates);
+    fs.writeFileSync(controlPath, JSON.stringify(existing, null, 2) + '\n', 'utf8');
+  }
+
+  _adjustConcurrency(n) {
+    if (n === this.pool.length) return;
+    if (n > this.pool.length) {
+      while (this.pool.length < n) this.pool.push({ idle: true });
+    } else {
+      // Shrink — only remove idle slots from the end
+      while (this.pool.length > n) {
+        const lastIdle = this.pool.findLastIndex(s => s.idle);
+        if (lastIdle === -1) break; // All busy, can't shrink further
+        this.pool.splice(lastIdle, 1);
+      }
+    }
+    this.concurrency = this.pool.length;
   }
 
   // ─── Event emission helper ────────────────────────────────────────────────

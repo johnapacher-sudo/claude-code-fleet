@@ -3,6 +3,7 @@
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const { spawn } = require('child_process');
 const { SocketServer } = require('./socket');
 const { TUI } = require('./tui');
 
@@ -316,6 +317,109 @@ class Master {
       }
     }
     return { pending, running };
+  }
+
+  // ─── Daemon control (TUI → daemon via control file) ───────────────────────
+
+  getDaemonState() {
+    const pidPath = path.join(GLOBAL_CONFIG_DIR, 'worker.pid');
+    const controlPath = path.join(GLOBAL_CONFIG_DIR, 'worker-control.json');
+    let pid = null;
+    let alive = false;
+    let paused = false;
+    let concurrency = 1;
+
+    if (fs.existsSync(pidPath)) {
+      try {
+        pid = parseInt(fs.readFileSync(pidPath, 'utf8'), 10);
+        alive = this.isProcessAlive(pid);
+        if (!alive) { try { fs.unlinkSync(pidPath); } catch {} }
+      } catch {}
+    }
+
+    if (fs.existsSync(controlPath)) {
+      try {
+        const ctrl = JSON.parse(fs.readFileSync(controlPath, 'utf8'));
+        paused = !!ctrl.paused;
+        if (typeof ctrl.concurrency === 'number' && ctrl.concurrency > 0) {
+          concurrency = ctrl.concurrency;
+        }
+      } catch {}
+    }
+
+    return { running: alive, pid, paused, concurrency };
+  }
+
+  startWorkerDaemon(concurrency = 1, defaultModel = null) {
+    const pidPath = path.join(GLOBAL_CONFIG_DIR, 'worker.pid');
+    if (fs.existsSync(pidPath)) {
+      try {
+        const pid = parseInt(fs.readFileSync(pidPath, 'utf8'), 10);
+        if (this.isProcessAlive(pid)) return false;
+      } catch {}
+      try { fs.unlinkSync(pidPath); } catch {}
+    }
+
+    const dir = path.dirname(pidPath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+    const daemonArgs = [
+      process.argv[1] || 'fleet',
+      'worker', '_daemon',
+      '--concurrency', String(concurrency),
+      '--poll-interval', '5',
+      '--timeout', '10800',
+    ];
+    if (defaultModel) daemonArgs.push('--default-model', defaultModel);
+
+    const child = spawn(process.execPath, daemonArgs, {
+      cwd: process.cwd(),
+      stdio: 'ignore',
+      detached: true,
+      env: { ...process.env },
+    });
+    child.unref();
+
+    fs.writeFileSync(pidPath, String(child.pid));
+    return true;
+  }
+
+  stopWorkerDaemon() {
+    const state = this.getDaemonState();
+    if (!state.running) return false;
+    try { process.kill(state.pid, 'SIGTERM'); } catch {}
+    const pidPath = path.join(GLOBAL_CONFIG_DIR, 'worker.pid');
+    try { fs.unlinkSync(pidPath); } catch {}
+    return true;
+  }
+
+  pauseWorkerDaemon(paused) {
+    this._writeWorkerControl({ paused });
+    if (this.tui) this.tui.scheduleRender();
+  }
+
+  setDaemonConcurrency(n) {
+    this._writeWorkerControl({ concurrency: n });
+    if (this.tui) this.tui.scheduleRender();
+  }
+
+  addWorkerTask(prompt) {
+    const { WorkerTaskStore } = require('./worker-task-store');
+    const store = new WorkerTaskStore(GLOBAL_CONFIG_DIR);
+    const task = store.addTask({ prompt, cwd: process.cwd() });
+    // Trigger immediate queue poll so it appears in TUI
+    this.pollWorkerQueue();
+    return task;
+  }
+
+  _writeWorkerControl(updates) {
+    const controlPath = path.join(GLOBAL_CONFIG_DIR, 'worker-control.json');
+    let existing = {};
+    try { existing = JSON.parse(fs.readFileSync(controlPath, 'utf8')); } catch {}
+    Object.assign(existing, updates);
+    const dir = path.dirname(controlPath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(controlPath, JSON.stringify(existing, null, 2) + '\n', 'utf8');
   }
 }
 

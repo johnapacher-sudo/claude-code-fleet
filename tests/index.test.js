@@ -122,6 +122,17 @@ describe('parseArgs', () => {
     expect(r.args).toEqual(['fix the bug']);
     expect(r.opts.title).toBe('Bugfix');
   });
+  it('worker status subcommand', () => {
+    const r = parseArgs(['worker', 'status']);
+    expect(r.command).toBe('worker');
+    expect(r.subcommand).toBe('status');
+  });
+  it('worker report subcommand with date', () => {
+    const r = parseArgs(['worker', 'report', '2026-04-11']);
+    expect(r.command).toBe('worker');
+    expect(r.subcommand).toBe('report');
+    expect(r.args).toEqual(['2026-04-11']);
+  });
 });
 
 describe('filterInstances', () => {

@@ -537,8 +537,6 @@ function cmdUp(config, onlyNames) {
       claudeArgs.push('--settings', JSON.stringify({ env: claudeSettingsEnv }));
     }
 
-    console.log(claudeArgs)
-
     const child = spawn('claude', claudeArgs, {
       cwd,
       env,
@@ -672,7 +670,7 @@ function getWorkerStore() {
   return new WorkerTaskStore(GLOBAL_CONFIG_DIR);
 }
 
-function cmdWorkerStart(opts) {
+async function cmdWorkerStart(opts) {
   const workerPidPath = path.join(GLOBAL_CONFIG_DIR, 'worker.pid');
 
   // Check if already running
@@ -688,6 +686,25 @@ function cmdWorkerStart(opts) {
     }
   }
 
+  // Resolve default model profile
+  let defaultModel = opts.model || null;
+  if (!defaultModel) {
+    const data = loadModels();
+    if (data.models.length > 0) {
+      const items = data.models.map(m => modelItem(m));
+      const selected = await selectFromList(items, 'Select default model for worker');
+      if (selected) defaultModel = selected;
+    }
+  } else {
+    // Validate --model flag
+    const data = loadModels();
+    if (!data.models.some(m => m.name === defaultModel)) {
+      console.error(ANSI.red(`Model profile "${defaultModel}" not found.`));
+      console.error(`Available: ${data.models.map(m => m.name).join(', ') || '(none)'}`);
+      process.exit(1);
+    }
+  }
+
   // Spawn detached daemon process
   const daemonArgs = [
     process.argv[1],
@@ -696,6 +713,7 @@ function cmdWorkerStart(opts) {
     '--poll-interval', String(opts.pollInterval || 5),
     '--timeout', String(opts.timeout || 600),
   ];
+  if (defaultModel) daemonArgs.push('--default-model', defaultModel);
 
   const child = spawn(process.argv[0], daemonArgs, {
     cwd: process.cwd(),
@@ -710,7 +728,9 @@ function cmdWorkerStart(opts) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(workerPidPath, String(child.pid));
 
+  const modelInfo = defaultModel ? ANSI.cyan(defaultModel) : 'default';
   console.log(ANSI.green(`\n  Worker started (pid ${child.pid}, concurrency=${opts.concurrency || 1}, poll=${opts.pollInterval || 5}s)`));
+  console.log(`  Model: ${modelInfo}`);
   console.log(ANSI.dim('  fleet worker add <prompt>  # Add tasks'));
   console.log(ANSI.dim('  fleet worker list           # View queue'));
   console.log(ANSI.dim('  fleet worker stop           # Stop worker'));
@@ -725,6 +745,8 @@ function cmdWorkerDaemon(opts) {
   const manager = new WorkerManager(store, {
     concurrency: opts.concurrency || 1,
     pollInterval: opts.pollInterval || 5,
+    timeout: opts.timeout || 600,
+    defaultModel: opts.defaultModel || null,
     timeout: opts.timeout || 600,
     onTaskEvent: () => {}, // Daemon runs headless — TUI reads queue file instead
   });
@@ -751,6 +773,37 @@ function cmdWorkerStop() {
     // Clean up stale PID file
     try { fs.unlinkSync(pidPath); } catch { /* ignore */ }
   }
+}
+
+function cmdWorkerStatus() {
+  const pidPath = path.join(GLOBAL_CONFIG_DIR, 'worker.pid');
+  if (!fs.existsSync(pidPath)) {
+    console.log(ANSI.yellow('Worker daemon is not running.'));
+    return;
+  }
+
+  const pid = parseInt(fs.readFileSync(pidPath, 'utf8'), 10);
+  if (isNaN(pid)) {
+    console.log(ANSI.yellow('Worker daemon is not running (invalid PID file).'));
+    try { fs.unlinkSync(pidPath); } catch { /* ignore */ }
+    return;
+  }
+
+  if (!isProcessAlive(pid)) {
+    console.log(ANSI.yellow(`Worker daemon is not running (stale PID: ${pid}).`));
+    try { fs.unlinkSync(pidPath); } catch { /* ignore */ }
+    return;
+  }
+
+  console.log(ANSI.green(`\n  Worker daemon is running (pid ${pid})`));
+
+  // Show queue summary
+  const store = getWorkerStore();
+  const tasks = store.getActiveTasks();
+  const pending = tasks.filter(t => t.status === 'pending').length;
+  const running = tasks.filter(t => t.status === 'running').length;
+  console.log(`  Queue: ${pending} pending, ${running} running`);
+  console.log();
 }
 
 function cmdWorkerAdd(args, opts) {
@@ -986,12 +1039,66 @@ async function cmdWorkerReport(args) {
           console.log(ANSI.red(`  ${task.result.stderr}`));
         }
       }
-      console.log('\n' + ANSI.dim('  Press Enter to go back...'));
+      // Action after viewing detail
+      if (task.status === 'completed') {
+        const actionItems = [
+          { label: '\u2190 Back to task list', detail: '', value: '__back__' },
+          { label: 'Continue this task...', detail: 'Create new task building on this result', value: '__continue__' },
+        ];
+        const action = await renderSelector({ title: 'Next action', items: actionItems });
 
-      await new Promise(resolve => {
-        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-        rl.question('', () => { rl.close(); resolve(); });
-      });
+        if (action === '__continue__') {
+          const inputMod = await import(selectorPath);
+          const continued = await inputMod.renderInput({
+            title: `Continue: ${task.title}`,
+            fields: [
+              {
+                label: 'Additional Instructions',
+                value: '',
+                placeholder: 'Describe what to do next based on the previous result...',
+              },
+            ],
+            requiredFields: ['Additional Instructions'],
+          });
+
+          if (!continued) continue taskLoop; // Esc from input → back to action selector
+
+          const previousResult = (task.result && task.result.claudeResult) || '(no output)';
+          const newPrompt = [
+            '<previous-task>',
+            `<prompt>${task.prompt}</prompt>`,
+            '<result>',
+            previousResult,
+            '</result>',
+            '</previous-task>',
+            '',
+            '<follow-up>',
+            continued['Additional Instructions'],
+            '</follow-up>',
+          ].join('\n');
+
+          const store = getWorkerStore();
+          const newTask = store.addTask({
+            prompt: newPrompt,
+            title: `[continue] ${task.title}`,
+            cwd: task.cwd,
+            modelProfile: task.modelProfile,
+          });
+
+          console.log(ANSI.green(`\n  New task created: ${newTask.id}`));
+          console.log(ANSI.dim(`    Title: ${newTask.title}`));
+          console.log(ANSI.dim(`    Run 'fleet worker list' to check status.\n`));
+          return;
+        }
+        // null (Esc/q) or __back__ → continue taskLoop
+      } else {
+        // Failed task — just "Press Enter to go back"
+        console.log('\n' + ANSI.dim('  Press Enter to go back...'));
+        await new Promise(resolve => {
+          const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+          rl.question('', () => { rl.close(); resolve(); });
+        });
+      }
 
       continue taskLoop;
     }
@@ -1097,6 +1204,8 @@ function parseArgs(argv) {
       opts.status = argv[++i];
     } else if (arg === '--title' && argv[i + 1]) {
       opts.title = argv[++i];
+    } else if (arg === '--default-model' && argv[i + 1]) {
+      opts.defaultModel = argv[++i];
     } else if (arg === '--help' || arg === '-h') {
       opts.help = true;
     } else {
@@ -1133,6 +1242,7 @@ ${ANSI.bold('Commands:')}
 ${ANSI.bold('Worker Commands:')}
   worker start        Start auto-worker daemon
   worker stop         Stop auto-worker daemon
+  worker status       Check if worker daemon is running
   worker add <prompt> Add a task to the queue
   worker list         View active task queue
   worker import <file>Import tasks from JSON file
@@ -1237,6 +1347,7 @@ function main() {
       case 'start': cmdWorkerStart(opts); break;
       case '_daemon': cmdWorkerDaemon(opts); break;
       case 'stop': cmdWorkerStop(); break;
+      case 'status': cmdWorkerStatus(); break;
       case 'add': cmdWorkerAdd(args, opts); break;
       case 'list': case 'ls': cmdWorkerList(opts); break;
       case 'import': cmdWorkerImport(args); break;
@@ -1244,7 +1355,7 @@ function main() {
       case 'show': cmdWorkerShow(args); break;
       default:
         console.error(ANSI.red(`Unknown worker command: ${workerCmd || '(none)'}`));
-        console.error('Available: start, stop, add, list, import, report, show');
+        console.error('Available: start, stop, status, add, list, import, report, show');
         process.exit(1);
     }
     return;

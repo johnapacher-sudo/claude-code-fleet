@@ -14,6 +14,15 @@ describe('Footer', () => {
     expect(out).toContain('quit');
   });
 
+  it('renders daemon control key hints', () => {
+    const { lastFrame } = render(h(Footer));
+    const out = lastFrame();
+    expect(out).toContain('[d] daemon');
+    expect(out).toContain('[p] pause');
+    expect(out).toContain('concur');
+    expect(out).toContain('[a] add');
+  });
+
   it('does not render position/total by default', () => {
     const { lastFrame } = render(h(Footer));
     expect(lastFrame()).not.toContain('[/');
