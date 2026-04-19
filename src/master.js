@@ -266,12 +266,16 @@ function ensureHooks() {
 
   const installedAdapters = registry.installed();
   for (const adapter of installedAdapters) {
+    // Copilot hooks are per-repo (.github/hooks/fleet.json) — skip in global install
+    if (adapter.name === 'copilot') continue;
     adapter.installHooks(HOOK_CLIENT_DST);
   }
 }
 
 function removeHooks() {
   for (const adapter of registry.all()) {
+    // Copilot hooks are per-repo — can't remove globally
+    if (adapter.name === 'copilot') continue;
     adapter.removeHooks();
   }
 }

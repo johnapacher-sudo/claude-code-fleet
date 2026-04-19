@@ -4,8 +4,8 @@ import os from 'os';
 
 const { CopilotAdapter } = await import('../../src/adapters/copilot.js');
 
-const COPILOT_DIR = path.join(os.homedir(), '.copilot');
-const CONFIG_PATH = path.join(COPILOT_DIR, 'config.json');
+const TEST_CWD = '/test/project';
+const HOOK_FILE_PATH = path.join(TEST_CWD, '.github', 'hooks', 'fleet.json');
 const TEST_HOOK_CLIENT = path.join(os.homedir(), '.config', 'claude-code-fleet', 'hooks', 'hook-client.js');
 
 function createMockFs() {
@@ -20,6 +20,7 @@ function createMockFs() {
     writeFileSync: (p, content) => { store[p] = content; },
     mkdirSync: () => {},
     renameSync: (src, dst) => { store[dst] = store[src]; delete store[src]; },
+    unlinkSync: (p) => { delete store[p]; },
   };
 }
 
@@ -83,9 +84,35 @@ describe('CopilotAdapter', () => {
       expect(env.FLEET_MODEL_NAME).toBe('worker-2');
       expect(env.COPILOT_MODEL).toBeUndefined();
     });
+
+    it('sets COPILOT_GITHUB_TOKEN when apiKey is present', () => {
+      const env = adapter.buildEnv(
+        { name: 'gh-worker', model: 'gpt-4o', apiKey: 'github_pat_xxxxx' },
+        { PATH: '/bin' }
+      );
+      expect(env.COPILOT_GITHUB_TOKEN).toBe('github_pat_xxxxx');
+    });
+
+    it('does not set COPILOT_GITHUB_TOKEN when apiKey is absent', () => {
+      const env = adapter.buildEnv(
+        { name: 'gh-worker', model: 'gpt-4o' },
+        { PATH: '/bin' }
+      );
+      expect(env.COPILOT_GITHUB_TOKEN).toBeUndefined();
+    });
+
+    it('sets both COPILOT_MODEL and COPILOT_GITHUB_TOKEN', () => {
+      const env = adapter.buildEnv(
+        { name: 'full-profile', model: 'gpt-4.1', apiKey: 'github_pat_abc123' },
+        {}
+      );
+      expect(env.COPILOT_MODEL).toBe('gpt-4.1');
+      expect(env.COPILOT_GITHUB_TOKEN).toBe('github_pat_abc123');
+      expect(env.FLEET_MODEL_NAME).toBe('full-profile');
+    });
   });
 
-  // ── Task 2: hook operations ──
+  // ── Task 2: hook operations (per-repo .github/hooks/fleet.json) ──
 
   describe('hook operations', () => {
     let mockFs;
@@ -96,118 +123,125 @@ describe('CopilotAdapter', () => {
     });
 
     describe('installHooks', () => {
-      it('creates hooks in empty config with correct structure', () => {
-        adapter.installHooks(TEST_HOOK_CLIENT);
-        const written = JSON.parse(mockFs.store[CONFIG_PATH]);
+      it('creates .github/hooks/fleet.json with version:1 and hooks wrapper', () => {
+        adapter.installHooks(TEST_HOOK_CLIENT, TEST_CWD);
+        const written = JSON.parse(mockFs.store[HOOK_FILE_PATH]);
+        expect(written.version).toBe(1);
         expect(written.hooks).toBeDefined();
-        const cmd = written.hooks.sessionStart[0].hooks[0].command;
-        expect(cmd).toBe(`node ${TEST_HOOK_CLIENT} --tool copilot`);
-        expect(cmd).toContain('claude-code-fleet');
+        const hook = written.hooks.sessionStart[0];
+        expect(hook.type).toBe('command');
+        expect(hook.bash).toBe(`node ${TEST_HOOK_CLIENT} --tool copilot`);
+        expect(hook.bash).toContain('claude-code-fleet');
       });
 
-      it('uses camelCase keys via EVENT_KEY_MAP', () => {
-        adapter.installHooks(TEST_HOOK_CLIENT);
-        const written = JSON.parse(mockFs.store[CONFIG_PATH]);
+      it('uses correct Copilot event keys under hooks wrapper', () => {
+        adapter.installHooks(TEST_HOOK_CLIENT, TEST_CWD);
+        const written = JSON.parse(mockFs.store[HOOK_FILE_PATH]);
         expect(written.hooks.sessionStart).toHaveLength(1);
         expect(written.hooks.postToolUse).toHaveLength(1);
-        expect(written.hooks.agentStop).toHaveLength(1);
-        // PascalCase keys should NOT be present
-        expect(written.hooks.SessionStart).toBeUndefined();
-        expect(written.hooks.PostToolUse).toBeUndefined();
-        expect(written.hooks.Stop).toBeUndefined();
+        expect(written.hooks.sessionEnd).toHaveLength(1);
+        // Wrong keys should NOT be present at top level
+        expect(written.agentStop).toBeUndefined();
+        expect(written.SessionStart).toBeUndefined();
       });
 
-      it('does not duplicate existing fleet hooks', () => {
-        mockFs.store[CONFIG_PATH] = JSON.stringify({
+      it('overwrites existing fleet.json (idempotent)', () => {
+        mockFs.store[HOOK_FILE_PATH] = JSON.stringify({
+          version: 1,
           hooks: {
-            sessionStart: [{
-              hooks: [{ type: 'command', command: `node ${TEST_HOOK_CLIENT} --tool copilot` }]
-            }]
-          }
+            sessionStart: [
+              { type: 'command', bash: `node ${TEST_HOOK_CLIENT} --tool copilot` }
+            ],
+          },
         });
-        adapter.installHooks(TEST_HOOK_CLIENT);
-        const written = JSON.parse(mockFs.store[CONFIG_PATH]);
+        adapter.installHooks(TEST_HOOK_CLIENT, TEST_CWD);
+        const written = JSON.parse(mockFs.store[HOOK_FILE_PATH]);
         expect(written.hooks.sessionStart).toHaveLength(1);
         expect(written.hooks.postToolUse).toHaveLength(1);
+        expect(written.hooks.sessionEnd).toHaveLength(1);
       });
 
-      it('preserves non-fleet hooks', () => {
-        mockFs.store[CONFIG_PATH] = JSON.stringify({
-          hooks: {
-            sessionStart: [{
-              hooks: [{ type: 'command', command: 'some-other-hook' }]
-            }]
-          }
-        });
-        adapter.installHooks(TEST_HOOK_CLIENT);
-        const written = JSON.parse(mockFs.store[CONFIG_PATH]);
-        expect(written.hooks.sessionStart).toHaveLength(2);
+      it('defaults to process.cwd() when cwd not specified', () => {
+        const originalCwd = process.cwd;
+        process.cwd = () => TEST_CWD;
+        try {
+          adapter.installHooks(TEST_HOOK_CLIENT);
+          expect(HOOK_FILE_PATH in mockFs.store).toBe(true);
+        } finally {
+          process.cwd = originalCwd;
+        }
       });
     });
 
     describe('removeHooks', () => {
-      it('removes fleet hooks while preserving non-fleet hooks', () => {
-        mockFs.store[CONFIG_PATH] = JSON.stringify({
+      it('removes fleet.json file when it is a Fleet-managed file', () => {
+        mockFs.store[HOOK_FILE_PATH] = JSON.stringify({
+          version: 1,
           hooks: {
-            sessionStart: [
-              { hooks: [{ type: 'command', command: 'node /x/claude-code-fleet/hook' }] },
-              { hooks: [{ type: 'command', command: 'other-hook' }] },
-            ],
-            postToolUse: [
-              { hooks: [{ type: 'command', command: 'node /x/claude-code-fleet/hook' }] },
-            ],
-          }
+            sessionStart: [{ type: 'command', bash: 'node /x/claude-code-fleet/hook' }],
+            postToolUse: [{ type: 'command', bash: 'node /x/claude-code-fleet/hook' }],
+            sessionEnd: [{ type: 'command', bash: 'node /x/claude-code-fleet/hook' }],
+          },
         });
-        adapter.removeHooks();
-        const written = JSON.parse(mockFs.store[CONFIG_PATH]);
-        expect(written.hooks.sessionStart).toHaveLength(1);
-        expect(written.hooks.sessionStart[0].hooks[0].command).toBe('other-hook');
-        expect(written.hooks.postToolUse).toBeUndefined();
+        adapter.removeHooks(TEST_CWD);
+        expect(HOOK_FILE_PATH in mockFs.store).toBe(false);
       });
 
-      it('cleans up empty hooks object', () => {
-        mockFs.store[CONFIG_PATH] = JSON.stringify({
+      it('does not remove fleet.json if it is not a Fleet-managed file', () => {
+        mockFs.store[HOOK_FILE_PATH] = JSON.stringify({
+          version: 1,
           hooks: {
-            sessionStart: [
-              { hooks: [{ type: 'command', command: 'node /x/claude-code-fleet/hook' }] },
-            ],
-          }
+            sessionStart: [{ type: 'command', bash: 'some-other-hook' }],
+            postToolUse: [{ type: 'command', bash: 'some-other-hook' }],
+            sessionEnd: [{ type: 'command', bash: 'some-other-hook' }],
+          },
         });
-        adapter.removeHooks();
-        const written = JSON.parse(mockFs.store[CONFIG_PATH]);
-        expect(written.hooks).toBeUndefined();
+        adapter.removeHooks(TEST_CWD);
+        expect(HOOK_FILE_PATH in mockFs.store).toBe(true);
       });
 
-      it('is no-op when config file is missing', () => {
+      it('is no-op when fleet.json is missing', () => {
         const keysBefore = Object.keys(mockFs.store);
-        adapter.removeHooks();
+        adapter.removeHooks(TEST_CWD);
         expect(Object.keys(mockFs.store)).toEqual(keysBefore);
       });
     });
 
     describe('isHookInstalled', () => {
-      it('returns true when all events have fleet hooks via camelCase keys', () => {
-        mockFs.store[CONFIG_PATH] = JSON.stringify({
+      it('returns true when all events have fleet hooks', () => {
+        mockFs.store[HOOK_FILE_PATH] = JSON.stringify({
+          version: 1,
           hooks: {
-            sessionStart: [{ hooks: [{ type: 'command', command: 'node /x/claude-code-fleet/hook' }] }],
-            postToolUse: [{ hooks: [{ type: 'command', command: 'node /x/claude-code-fleet/hook' }] }],
-            agentStop: [{ hooks: [{ type: 'command', command: 'node /x/claude-code-fleet/hook' }] }],
-          }
+            sessionStart: [{ type: 'command', bash: 'node /x/claude-code-fleet/hook' }],
+            postToolUse: [{ type: 'command', bash: 'node /x/claude-code-fleet/hook' }],
+            sessionEnd: [{ type: 'command', bash: 'node /x/claude-code-fleet/hook' }],
+          },
         });
-        expect(adapter.isHookInstalled()).toBe(true);
+        expect(adapter.isHookInstalled(TEST_CWD)).toBe(true);
       });
 
       it('returns false when some events are missing hooks', () => {
-        mockFs.store[CONFIG_PATH] = JSON.stringify({
+        mockFs.store[HOOK_FILE_PATH] = JSON.stringify({
+          version: 1,
           hooks: {
-            sessionStart: [{ hooks: [{ type: 'command', command: 'node /x/claude-code-fleet/hook' }] }],
-          }
+            sessionStart: [{ type: 'command', bash: 'node /x/claude-code-fleet/hook' }],
+          },
         });
-        expect(adapter.isHookInstalled()).toBe(false);
+        expect(adapter.isHookInstalled(TEST_CWD)).toBe(false);
       });
 
-      it('returns false when config file is missing', () => {
-        expect(adapter.isHookInstalled()).toBe(false);
+      it('returns false when fleet.json is missing', () => {
+        expect(adapter.isHookInstalled(TEST_CWD)).toBe(false);
+      });
+
+      it('defaults to process.cwd() when cwd not specified', () => {
+        const originalCwd = process.cwd;
+        process.cwd = () => TEST_CWD;
+        try {
+          expect(adapter.isHookInstalled()).toBe(false);
+        } finally {
+          process.cwd = originalCwd;
+        }
       });
     });
   });
@@ -215,10 +249,10 @@ describe('CopilotAdapter', () => {
   // ── Task 3: normalizePayload + summarizeToolUse ──
 
   describe('normalizePayload', () => {
-    it('maps camelCase sessionStart payload to unified format', () => {
+    it('maps sessionStart payload to unified format', () => {
       const raw = {
         type: 'sessionStart',
-        session_id: 'sess-1',
+        sessionId: 'sess-1',
         cwd: '/project',
         model: 'gpt-4o',
       };
@@ -230,85 +264,97 @@ describe('CopilotAdapter', () => {
       expect(result.timestamp).toBeTypeOf('number');
     });
 
-    it('maps PascalCase SessionStart payload to unified format', () => {
+    it('maps sessionEnd payload to Stop event', () => {
       const raw = {
-        type: 'SessionStart',
-        sessionId: 'sess-2',
-        cwd: '/workspace',
-        model: 'o1',
+        type: 'sessionEnd',
+        sessionId: 'sess-5',
+        cwd: '/project',
+        reason: 'complete',
       };
       const result = adapter.normalizePayload(raw);
-      expect(result.event).toBe('SessionStart');
-      expect(result.session_id).toBe('sess-2');
-      expect(result.cwd).toBe('/workspace');
+      expect(result.event).toBe('Stop');
+      expect(result.session_id).toBe('sess-5');
+      expect(result.message).toBe('complete');
     });
 
-    it('maps camelCase postToolUse payload to unified format', () => {
+    it('maps postToolUse payload with toolName and toolArgs', () => {
       const raw = {
         type: 'postToolUse',
-        session_id: 'sess-3',
+        sessionId: 'sess-3',
         cwd: '/app',
         model: 'gpt-4o',
-        tool_name: 'Bash',
-        tool_input: { command: 'ls' },
+        toolName: 'Bash',
+        toolArgs: JSON.stringify({ command: 'ls -la' }),
       };
       const result = adapter.normalizePayload(raw);
       expect(result.event).toBe('PostToolUse');
       expect(result.tool_name).toBe('Bash');
-      expect(result.tool_input).toEqual({ command: 'ls' });
+      expect(result.tool_input).toEqual({ command: 'ls -la' });
     });
 
-    it('maps PascalCase PostToolUse payload to unified format', () => {
+    it('maps postToolUse payload with toolResult', () => {
       const raw = {
-        type: 'PostToolUse',
+        type: 'postToolUse',
         sessionId: 'sess-4',
         cwd: '/app',
-        model: 'o3',
         toolName: 'Edit',
-        input: { file_path: '/a.js' },
+        toolArgs: JSON.stringify({ file_path: '/a.js' }),
+        toolResult: { resultType: 'success', textResultForLlm: 'File edited' },
       };
       const result = adapter.normalizePayload(raw);
       expect(result.event).toBe('PostToolUse');
       expect(result.tool_name).toBe('Edit');
       expect(result.tool_input).toEqual({ file_path: '/a.js' });
+      expect(result.tool_output).toBe('File edited');
     });
 
-    it('maps camelCase agentStop payload to Stop event', () => {
+    it('handles toolArgs that is not valid JSON as string', () => {
       const raw = {
-        type: 'agentStop',
-        session_id: 'sess-5',
-        message: 'Task completed',
+        type: 'postToolUse',
+        sessionId: 'sess-raw',
+        toolName: 'Grep',
+        toolArgs: 'plain-text-args',
       };
       const result = adapter.normalizePayload(raw);
-      expect(result.event).toBe('Stop');
-      expect(result.message).toBe('Task completed');
+      expect(result.tool_input).toBe('plain-text-args');
     });
 
-    it('maps PascalCase AgentStop payload to Stop event', () => {
+    it('maps SessionEnd (PascalCase) to Stop event', () => {
       const raw = {
-        type: 'AgentStop',
+        type: 'SessionEnd',
         sessionId: 'sess-6',
-        message: 'Done',
+        reason: 'error',
       };
       const result = adapter.normalizePayload(raw);
       expect(result.event).toBe('Stop');
-      expect(result.message).toBe('Done');
+      expect(result.message).toBe('error');
     });
 
     it('truncates last_assistant_message to 500 chars', () => {
       const raw = {
         type: 'sessionStart',
-        session_id: 's1',
+        sessionId: 's1',
         last_assistant_message: 'x'.repeat(1000),
       };
       const result = adapter.normalizePayload(raw);
       expect(result.last_assistant_message).toHaveLength(500);
     });
 
+    it('uses timestamp from payload when present', () => {
+      const ts = 1713523200000;
+      const raw = {
+        type: 'sessionStart',
+        sessionId: 's-ts',
+        timestamp: ts,
+      };
+      const result = adapter.normalizePayload(raw);
+      expect(result.timestamp).toBe(ts);
+    });
+
     it('handles unknown event type gracefully', () => {
       const raw = {
         type: 'unknownEvent',
-        session_id: 's-unknown',
+        sessionId: 's-unknown',
       };
       const result = adapter.normalizePayload(raw);
       expect(result.event).toBe('unknownEvent');

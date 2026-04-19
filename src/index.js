@@ -176,8 +176,8 @@ async function cmdModelAdd(toolName) {
 
   const placeholders = {
     modelId: toolName === 'codex' ? 'e.g. gpt-5.4' : toolName === 'copilot' ? 'e.g. gpt-4.1' : 'e.g. claude-opus-4-6',
-    apiKey: toolName === 'copilot' ? 'not required (GitHub OAuth)' : toolName === 'codex' ? 'sk-...' : 'sk-ant-...',
-    apiBaseUrl: toolName === 'codex' ? 'https://api.openai.com/v1' : toolName === 'copilot' ? 'not required' : 'https://api.anthropic.com',
+    apiKey: toolName === 'copilot' ? 'GitHub PAT (copilot_requests), press Enter to skip' : toolName === 'codex' ? 'sk-...' : 'sk-ant-...',
+    apiBaseUrl: toolName === 'codex' ? 'https://api.openai.com/v1' : toolName === 'copilot' ? 'not required (uses GitHub models)' : 'https://api.anthropic.com',
   };
 
   const selectorPath = path.join(__dirname, 'components', 'selector.mjs');
@@ -272,16 +272,26 @@ async function cmdModelEdit() {
     if (!entry) continue selectLoop; // stale data, re-show selector
 
     editLoop: while (true) {
+      const isCopilot = entry.tool === 'copilot';
+      const placeholders = {
+        modelId: isCopilot ? 'e.g. gpt-4.1' : 'e.g. claude-opus-4-6',
+        apiKey: isCopilot ? 'GitHub PAT (copilot_requests), press Enter to skip' : 'required',
+        apiBaseUrl: isCopilot ? 'not required (uses GitHub models)' : 'https://api.anthropic.com (leave empty for default)',
+      };
+      const requiredFields = isCopilot
+        ? ['Name', 'Model ID']
+        : ['Name', 'Model ID', 'API Key', 'API Base URL'];
+
       const updated = await inputMod.renderInput({
         title: `Edit "${selected || '(unnamed)'}"`,
         fields: [
           { label: 'Name', value: entry.name || '', placeholder: 'e.g. opus-prod' },
-          { label: 'Model ID', value: entry.model || '', placeholder: 'e.g. claude-opus-4-6' },
-          { label: 'API Key', value: entry.apiKey || '', placeholder: 'required' },
-          { label: 'API Base URL', value: entry.apiBaseUrl || '', placeholder: 'https://api.anthropic.com (leave empty for default)' },
+          { label: 'Model ID', value: entry.model || '', placeholder: placeholders.modelId },
+          { label: 'API Key', value: entry.apiKey || '', placeholder: placeholders.apiKey },
+          { label: 'API Base URL', value: entry.apiBaseUrl || '', placeholder: placeholders.apiBaseUrl },
           { label: 'Proxy URL', value: entry.proxy || '', placeholder: 'http://127.0.0.1:7890 (optional)' },
         ],
-        requiredFields: ['Name', 'Model ID', 'API Key', 'API Base URL'],
+        requiredFields,
       });
 
       if (!updated) continue selectLoop; // Esc from form → back to selector
@@ -430,22 +440,46 @@ function cmdHooksInstall(toolsFilter) {
         console.error(ANSI.yellow(`${adapter.displayName} not installed, skipping.`));
         continue;
       }
+      // Copilot hooks are per-repo — install in CWD
+      if (adapter.name === 'copilot') {
+        const cwd = process.cwd();
+        adapter.installHooks(HOOK_CLIENT_DST, cwd);
+        console.log(ANSI.green(`Fleet hooks installed for ${adapter.displayName}`));
+        console.log(ANSI.dim(`  (per-repo: ${cwd}/.github/hooks/fleet.json)`));
+        continue;
+      }
       adapter.installHooks(HOOK_CLIENT_DST);
       console.log(ANSI.green(`Fleet hooks installed for ${adapter.displayName}`));
     }
   } else {
     const { ensureHooks } = require('./master');
     ensureHooks();
-    const installedNames = registry.installed().map(a => a.displayName).join(', ');
+    const installedNames = registry.installed()
+      .filter(a => a.name !== 'copilot')
+      .map(a => a.displayName).join(', ');
     console.log(ANSI.green(`Fleet hooks installed for: ${installedNames || 'none (no tools detected)'}`));
+    // Copilot hooks are per-repo — hint user
+    if (registry.get('copilot') && registry.get('copilot').isInstalled()) {
+      console.log(ANSI.dim('  Copilot hooks are per-repo: use `fleet hooks install --tools copilot` in the target repo'));
+    }
   }
 }
 
 function cmdHooksRemove() {
   const { removeHooks } = require('./master');
   removeHooks();
+
+  // Also remove per-repo Copilot hooks from CWD
+  const copilotAdapter = registry.get('copilot');
+  if (copilotAdapter) {
+    copilotAdapter.removeHooks(process.cwd());
+  }
+
   const allNames = registry.all().map(a => a.displayName).join(', ');
   console.log(ANSI.green(`Fleet hooks removed for: ${allNames}`));
+  if (copilotAdapter) {
+    console.log(ANSI.dim('  (Copilot hooks removed from current directory only)'));
+  }
 }
 
 function cmdHooksStatus() {
@@ -453,7 +487,8 @@ function cmdHooksStatus() {
 
   for (const adapter of registry.all()) {
     const isInst = adapter.isInstalled();
-    const hookOk = typeof adapter.isHookInstalled === 'function' ? adapter.isHookInstalled() : false;
+    const cwd = adapter.name === 'copilot' ? process.cwd() : undefined;
+    const hookOk = typeof adapter.isHookInstalled === 'function' ? adapter.isHookInstalled(cwd) : false;
 
     console.log(`  ${ANSI.bold(adapter.displayName)} (${adapter.binary}):`);
     if (!isInst) {
@@ -463,8 +498,14 @@ function cmdHooksStatus() {
       for (const evt of adapter.hookEvents) {
         console.log(`      ${ANSI.green('\u2713')} ${evt}`);
       }
+      if (adapter.name === 'copilot') {
+        console.log(`      ${ANSI.dim('(per-repo: ' + process.cwd() + '/.github/hooks/fleet.json)')}`);
+      }
     } else {
       console.log(`    ${ANSI.red('\u2717')} Hooks not installed`);
+      if (adapter.name === 'copilot') {
+        console.log(`      ${ANSI.dim('(Copilot hooks are per-repo — run `fleet hooks install --tools copilot` in target repo)')}`);
+      }
     }
     console.log();
   }

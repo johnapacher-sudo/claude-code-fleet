@@ -1,16 +1,16 @@
 const path = require('path');
 const defaultFs = require('fs');
-const os = require('os');
 const { ToolAdapter } = require('./base');
 
-const COPILOT_DIR = path.join(os.homedir(), '.copilot');
-const CONFIG_PATH = path.join(COPILOT_DIR, 'config.json');
 const FLEET_IDENTIFIER = 'claude-code-fleet';
+const HOOK_DIR = '.github';
+const HOOK_SUBDIR = 'hooks';
+const HOOK_FILE = 'fleet.json';
 
 const EVENT_KEY_MAP = {
   SessionStart: 'sessionStart',
   PostToolUse: 'postToolUse',
-  Stop: 'agentStop',
+  Stop: 'sessionEnd',
 };
 
 class CopilotAdapter extends ToolAdapter {
@@ -33,83 +33,85 @@ class CopilotAdapter extends ToolAdapter {
   buildEnv(entry, baseEnv) {
     const env = { ...baseEnv, FLEET_MODEL_NAME: entry.name };
     if (entry.model) env.COPILOT_MODEL = entry.model;
+    if (entry.apiKey) env.COPILOT_GITHUB_TOKEN = entry.apiKey;
     return env;
   }
 
-  installHooks(hookClientPath) {
+  /**
+   * Copilot CLI loads hooks from .github/hooks/*.json in the repo directory.
+   * This is per-repo only — there is no global hooks support.
+   * @param {string} hookClientPath - Path to hook-client.js
+   * @param {string} [cwd] - Target repo directory (defaults to process.cwd())
+   */
+  installHooks(hookClientPath, cwd) {
     const fs = this._fs;
-    let config = {};
-    try {
-      if (fs.existsSync(CONFIG_PATH)) {
-        config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
-      }
-    } catch { /* corrupted -> start fresh */ }
+    const targetCwd = cwd || process.cwd();
+    const hookFilePath = this._hookFilePath(targetCwd);
+    const hookDir = path.dirname(hookFilePath);
+
+    if (!fs.existsSync(hookDir)) fs.mkdirSync(hookDir, { recursive: true });
 
     const hookCmd = `node ${hookClientPath} --tool copilot`;
-    if (!config.hooks) config.hooks = {};
+    const hookEntry = { type: 'command', bash: hookCmd };
 
-    for (const eventName of this.hookEvents) {
-      const key = EVENT_KEY_MAP[eventName];
-      if (!config.hooks[key]) config.hooks[key] = [];
-      const exists = config.hooks[key].some(
-        group => (group.hooks || []).some(h => h.command && h.command.includes(FLEET_IDENTIFIER))
-      );
-      if (!exists) {
-        config.hooks[key].push({
-          hooks: [{ type: 'command', command: hookCmd }]
-        });
-      }
-    }
+    const hookFile = {
+      version: 1,
+      hooks: {
+        sessionStart: [hookEntry],
+        postToolUse: [hookEntry],
+        sessionEnd: [hookEntry],
+      },
+    };
 
-    const dir = path.dirname(CONFIG_PATH);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    const tmpPath = CONFIG_PATH + '.fleet-tmp';
-    fs.writeFileSync(tmpPath, JSON.stringify(config, null, 2) + '\n');
-    fs.renameSync(tmpPath, CONFIG_PATH);
+    const tmpPath = hookFilePath + '.fleet-tmp';
+    fs.writeFileSync(tmpPath, JSON.stringify(hookFile, null, 2) + '\n');
+    fs.renameSync(tmpPath, hookFilePath);
   }
 
-  removeHooks() {
+  /**
+   * Remove fleet's hook file from the repo's .github/hooks/ directory.
+   * @param {string} [cwd] - Target repo directory (defaults to process.cwd())
+   */
+  removeHooks(cwd) {
     const fs = this._fs;
-    if (!fs.existsSync(CONFIG_PATH)) return;
+    const targetCwd = cwd || process.cwd();
+    const hookFilePath = this._hookFilePath(targetCwd);
 
-    let config = {};
+    if (!fs.existsSync(hookFilePath)) return;
+
+    // Verify it's a Fleet-managed file before deleting
     try {
-      config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+      const data = JSON.parse(fs.readFileSync(hookFilePath, 'utf-8'));
+      const hooksSection = data.hooks || {};
+      const isFleetFile = ['sessionStart', 'postToolUse', 'sessionEnd'].some(key => {
+        const hooks = hooksSection[key] || [];
+        return hooks.some(h => h.type === 'command' && h.bash && h.bash.includes(FLEET_IDENTIFIER));
+      });
+      if (!isFleetFile) return;
     } catch { return; }
 
-    if (!config.hooks) return;
-
-    for (const key of Object.keys(config.hooks)) {
-      config.hooks[key] = config.hooks[key].filter(group => {
-        if ((group.hooks || []).some(h => h.command && h.command.includes(FLEET_IDENTIFIER))) return false;
-        if (group.command && group.command.includes(FLEET_IDENTIFIER)) return false;
-        return true;
-      });
-      if (config.hooks[key].length === 0) delete config.hooks[key];
-    }
-    if (Object.keys(config.hooks).length === 0) delete config.hooks;
-
-    const tmpPath = CONFIG_PATH + '.fleet-tmp';
-    fs.writeFileSync(tmpPath, JSON.stringify(config, null, 2) + '\n');
-    fs.renameSync(tmpPath, CONFIG_PATH);
+    fs.unlinkSync(hookFilePath);
   }
 
-  isHookInstalled() {
+  /**
+   * Check if fleet hooks are installed in the repo's .github/hooks/ directory.
+   * @param {string} [cwd] - Target repo directory (defaults to process.cwd())
+   */
+  isHookInstalled(cwd) {
     const fs = this._fs;
-    if (!fs.existsSync(CONFIG_PATH)) return false;
-    let config = {};
-    try {
-      config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
-    } catch { return false; }
+    const targetCwd = cwd || process.cwd();
+    const hookFilePath = this._hookFilePath(targetCwd);
 
-    if (!config.hooks) return false;
-    return this.hookEvents.every(evt => {
-      const key = EVENT_KEY_MAP[evt];
-      const groups = config.hooks[key] || [];
-      return groups.some(
-        g => (g.hooks || []).some(h => h.command && h.command.includes(FLEET_IDENTIFIER))
-      );
-    });
+    if (!fs.existsSync(hookFilePath)) return false;
+
+    try {
+      const data = JSON.parse(fs.readFileSync(hookFilePath, 'utf-8'));
+      const hooksSection = data.hooks || {};
+      return ['sessionStart', 'postToolUse', 'sessionEnd'].every(key => {
+        const hooks = hooksSection[key] || [];
+        return hooks.some(h => h.type === 'command' && h.bash && h.bash.includes(FLEET_IDENTIFIER));
+      });
+    } catch { return false; }
   }
 
   normalizePayload(rawInput) {
@@ -120,22 +122,27 @@ class CopilotAdapter extends ToolAdapter {
       SessionStart: 'SessionStart',
       postToolUse: 'PostToolUse',
       PostToolUse: 'PostToolUse',
-      agentStop: 'Stop',
-      AgentStop: 'Stop',
+      sessionEnd: 'Stop',
+      SessionEnd: 'Stop',
     };
     const event = EVENT_NORMALIZE[rawType] || rawType;
 
-    // Handle both camelCase and PascalCase field names
-    const sessionId = rawInput.session_id || rawInput.sessionId || null;
-    const toolName = rawInput.tool_name || rawInput.toolName || null;
-    const toolInput = rawInput.tool_input || rawInput.input || null;
-    const lastMsg = rawInput.last_assistant_message || rawInput.lastAssistantMessage || null;
+    // Copilot payloads: toolArgs is JSON string, toolResult has structured format
+    const toolName = rawInput.toolName || null;
+    let toolInput = null;
+    if (rawInput.toolArgs) {
+      try { toolInput = JSON.parse(rawInput.toolArgs); } catch { toolInput = rawInput.toolArgs; }
+    }
+    const toolOutput = rawInput.toolResult
+      ? (rawInput.toolResult.textResultForLlm || JSON.stringify(rawInput.toolResult))
+      : null;
+    const reason = rawInput.reason || null;
 
     return {
       event,
-      session_id: sessionId,
+      session_id: rawInput.sessionId || null,
       cwd: rawInput.cwd || null,
-      timestamp: Date.now(),
+      timestamp: rawInput.timestamp || Date.now(),
       model: rawInput.model || null,
       pid: rawInput.pid || process.pid,
       ppid: rawInput.ppid || process.ppid,
@@ -143,8 +150,11 @@ class CopilotAdapter extends ToolAdapter {
       iterm_session_id: rawInput.iterm_session_id || process.env.ITERM_SESSION_ID || null,
       tool_name: toolName,
       tool_input: toolInput,
-      last_assistant_message: lastMsg ? lastMsg.slice(0, 500) : null,
-      message: rawInput.message || null,
+      tool_output: toolOutput,
+      last_assistant_message: rawInput.last_assistant_message
+        ? rawInput.last_assistant_message.slice(0, 500)
+        : null,
+      message: reason || rawInput.message || null,
     };
   }
 
@@ -159,6 +169,11 @@ class CopilotAdapter extends ToolAdapter {
       case 'Glob':  return `Glob ${input.pattern || ''}`;
       default:      return toolName;
     }
+  }
+
+  /** @private */
+  _hookFilePath(cwd) {
+    return path.join(cwd, HOOK_DIR, HOOK_SUBDIR, HOOK_FILE);
   }
 }
 

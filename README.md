@@ -6,11 +6,11 @@
 
 <!-- README-I18N:END -->
 
-Run multiple AI coding tool instances with different API keys, models, and endpoints in parallel — from one terminal, zero dependencies. Supports **Claude Code** and **Codex CLI**, with an extensible adapter architecture for future tools.
+Run multiple AI coding tool instances with different API keys, models, and endpoints in parallel — from one terminal, zero dependencies. Supports **Claude Code**, **GitHub Copilot CLI**, and **Codex CLI**, with an extensible adapter architecture for future tools.
 
 ## Key Features
 
-- **Multi-Tool Support** — Manage Claude Code and Codex CLI from a single interface via an Adapter pattern; easy to extend for other tools
+- **Multi-Tool Support** — Manage Claude Code, GitHub Copilot CLI, and Codex CLI from a single interface via an Adapter pattern; easy to extend for other tools
 - **Observer Dashboard** — Real-time TUI that auto-discovers all AI coding tool processes and shows their status, actions, and AI messages
 - **Terminal Focus** — Jump to any worker's terminal window/tab with one keypress (iTerm, Terminal.app, VSCode, Cursor, Warp, WezTerm)
 - **Session Persistence** — Workers survive master restarts; session state is persisted to disk and auto-resumed
@@ -22,7 +22,7 @@ Run multiple AI coding tool instances with different API keys, models, and endpo
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) >= 18
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) (`npm install -g @anthropic-ai/claude-code`) and/or [Codex CLI](https://developers.openai.com/codex/) (`npm install -g @openai/codex`)
+- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) (`npm install -g @anthropic-ai/claude-code`) and/or [GitHub Copilot CLI](https://docs.github.com/en/copilot) (`npm install -g @github/copilot`) and/or [Codex CLI](https://developers.openai.com/codex/) (`npm install -g @openai/codex`)
 
 ## Quick Start
 
@@ -37,6 +37,7 @@ cd claude-code-fleet
 # Add a model profile (interactive)
 fleet model add          # Select tool type first
 fleet model add claude   # Add a Claude Code profile
+fleet model add copilot  # Add a GitHub Copilot CLI profile
 fleet model add codex    # Add a Codex CLI profile
 
 # Run a single instance (interactive picker)
@@ -87,7 +88,7 @@ Manage named model profiles and launch single interactive AI coding sessions.
 | `fleet hooks remove` | — | Remove fleet hooks from all tools |
 | `fleet hooks status` | — | Show hook installation status per tool |
 | `fleet run` | — | Start an interactive session with a model profile |
-| `fleet model add [tool]` | — | Add a new model profile (`claude`, `codex`, or interactive) |
+| `fleet model add [tool]` | — | Add a new model profile (`claude`, `copilot`, `codex`, or interactive) |
 | `fleet model list` | `model ls` | List all saved model profiles |
 | `fleet model edit` | — | Interactively edit an existing model profile |
 | `fleet model delete` | `model rm` | Interactively delete a model profile |
@@ -107,7 +108,7 @@ Manage named model profiles and launch single interactive AI coding sessions.
 ### How It Works
 
 1. Copies `hook-client.js` and adapter modules to `~/.config/claude-code-fleet/hooks/`
-2. Auto-detects installed tools and injects hooks into each tool's config (`~/.claude/settings.json` for Claude, `~/.codex/hooks.json` for Codex)
+2. Auto-detects installed tools and injects hooks into each tool's config (`~/.claude/settings.json` for Claude, `~/.copilot/config.json` for Copilot, `~/.codex/hooks.json` for Codex)
 3. Starts a Unix socket server at `~/.config/claude-code-fleet/fleet.sock`
 4. When any tool process fires a hook, the client sends a normalized JSON event to the socket
 5. Master tracks each session by `session_id`, recording model info, tool usage, and AI messages
@@ -117,12 +118,12 @@ Manage named model profiles and launch single interactive AI coding sessions.
 
 ### Hook Events
 
-| Event | Claude Code | Codex CLI | What It Captures |
-|-------|:-----------:|:---------:|-----------------|
-| `SessionStart` | ✓ | ✓ | Model name, tool type, process PID/PPID, terminal program |
-| `PostToolUse` | ✓ | ✓ | Tool name and input (Edit/Write/Read show filename, Bash shows command, Grep shows pattern) |
-| `Stop` | ✓ | ✓ | Last assistant message (truncated to 500 chars), marks worker as idle |
-| `Notification` | ✓ | — | Starts a new turn with the notification message as summary |
+| Event | Claude Code | Copilot CLI | Codex CLI | What It Captures |
+|-------|:-----------:|:-----------:|:---------:|-----------------|
+| `SessionStart` | ✓ | ✓ | ✓ | Model name, tool type, process PID/PPID, terminal program |
+| `PostToolUse` | ✓ | ✓ | ✓ | Tool name and input (Edit/Write/Read show filename, Bash shows command, Grep shows pattern) |
+| `Stop` | ✓ | ✓ | ✓ | Last assistant message (truncated to 500 chars), marks worker as idle |
+| `Notification` | ✓ | — | — | Starts a new turn with the notification message as summary |
 
 ### Worker States
 
@@ -169,6 +170,7 @@ Hooks are installed into each tool's config file and are persistent — they sur
 ```bash
 fleet hooks install                # Auto-detect tools, install for all
 fleet hooks install --tools codex  # Install for Codex only
+fleet hooks install --tools copilot # Install for Copilot only
 fleet hooks status                 # Check installation per tool
 fleet hooks remove                 # Clean uninstall for all tools
 ```
@@ -248,10 +250,38 @@ All state is stored under `~/.config/claude-code-fleet/`:
 | `models.json` | Saved model profiles |
 | `fleet.sock` | Unix domain socket (transient, Observer mode) |
 | `hooks/hook-client.js` | Hook script for tool events |
-| `hooks/adapters/` | Tool adapter modules (Claude, Codex) used by hook-client |
+| `hooks/adapters/` | Tool adapter modules (Claude, Copilot, Codex) used by hook-client |
 | `hooks/notifier.js` | Desktop notification module (loaded by hook-client) |
 | `notify.json` | Desktop notification preferences |
 | `sessions/<id>.json` | Per-session metadata for Observer recovery |
+
+## GitHub Copilot CLI — Model Profiles
+
+Adding a Copilot model profile works the same as other tools (`fleet model add copilot`), with a few differences:
+
+### Authentication
+
+Copilot CLI supports two auth paths:
+
+| Mode | `apiKey` in profile | What happens |
+|------|---------------------|--------------|
+| **GitHub PAT** | Fine-grained PAT with "Copilot Requests" permission | `buildEnv()` injects `COPILOT_GITHUB_TOKEN` |
+| **Already logged in** | Empty (press Enter to skip) | Uses keychain OAuth from `copilot login` |
+
+The `apiKey` field is **optional** for Copilot profiles — if you've already run `copilot login`, you can skip it. If provided, it's passed as `COPILOT_GITHUB_TOKEN` (highest-precedence auth), enabling multi-account support with different GitHub tokens per profile.
+
+### Required Fields
+
+Only **Name** and **Model ID** are required for Copilot profiles. API Key and API Base URL are optional — Copilot uses GitHub's model endpoint by default.
+
+### Environment Variables
+
+| Variable | Source | Description |
+|----------|--------|-------------|
+| `COPILOT_MODEL` | `model` field | Model ID (e.g. `gpt-4.1`, `gpt-4o`) |
+| `COPILOT_GITHUB_TOKEN` | `apiKey` field | GitHub PAT (optional — uses OAuth if omitted) |
+
+> **Tip**: To use different GitHub accounts simultaneously, create separate profiles with different PATs.
 
 ## License
 

@@ -25,11 +25,11 @@ Minimal adapter approach — only add `src/adapters/copilot.js` and make minimal
 
 | Fleet Internal | Copilot Config Key | Copilot Payload Type |
 |----------------|-------------------|---------------------|
-| `SessionStart` | `sessionStart` | `sessionStart` / `SessionStart` |
-| `PostToolUse` | `postToolUse` | `postToolUse` / `PostToolUse` |
-| `Stop` | `agentStop` | `agentStop` / `AgentStop` |
+| `SessionStart` | `sessionStart` | `sessionStart` |
+| `PostToolUse` | `postToolUse` | `postToolUse` |
+| `Stop` | `sessionEnd` | `sessionEnd` |
 
-Copilot supports two payload formats: camelCase and VS Code compatible (PascalCase). Fleet normalizes both in `normalizePayload()`.
+Copilot uses camelCase event names in config and payloads. The `sessionEnd` event fires when a session stops, with a `reason` field (`complete`, `error`, `abort`, `timeout`, `user_exit`).
 
 ## buildArgs / buildEnv
 
@@ -43,68 +43,95 @@ No `--model` CLI flag exists for Copilot. Model selection is handled via environ
 ```js
 {
   ...baseEnv,
-  COPILOT_MODEL: entry.model,  // if model specified in profile
+  COPILOT_MODEL: entry.model,           // if model specified in profile
+  COPILOT_GITHUB_TOKEN: entry.apiKey,   // if GitHub PAT provided (optional)
 }
 ```
 
 ### Authentication
-Copilot uses GitHub OAuth — no API key injection needed. `cmdModelAdd()` skips the apiKey prompt for `copilot` tool type.
+Copilot CLI supports two authentication paths:
+
+| Mode | apiKey in profile | What happens |
+|------|------------------|--------------|
+| **GitHub PAT** | Fine-grained PAT with "Copilot Requests" permission | `buildEnv()` injects `COPILOT_GITHUB_TOKEN` |
+| **Already logged in** | Empty | Uses keychain OAuth from `copilot login` |
+
+The `apiKey` field in the model profile maps to `COPILOT_GITHUB_TOKEN` — the highest-precedence auth method for Copilot CLI. This enables multi-account support: different profiles with different GitHub tokens can run simultaneously.
+
+`cmdModelAdd()` makes apiKey optional for copilot (user may already be logged in via OAuth). The placeholder text guides users to create a Fine-grained PAT with "Copilot Requests" permission.
 
 ## Hook Installation
 
-**Target**: Global `~/.copilot/config.json` → `hooks` field.
+**Target**: Per-repo `<repo>/.github/hooks/fleet.json` — Copilot CLI loads hooks from `.github/hooks/*.json` in the working directory. There is no global hooks support (see [github/copilot-cli#1067](https://github.com/github/copilot-cli/issues/1067)).
 
-### installHooks(hookClientPath)
-1. Read `~/.copilot/config.json` (create empty object if missing)
-2. For each mapped event, inject a hook entry:
+### installHooks(hookClientPath, cwd)
+1. Create `<cwd>/.github/hooks/` directory if missing
+2. Write `<cwd>/.github/hooks/fleet.json`:
    ```json
    {
+     "version": 1,
      "hooks": {
        "sessionStart": [{
-         "command": "node \"/path/to/hook-client.js\" --tool copilot --event SessionStart",
-         "type": "command"
+         "type": "command",
+         "bash": "node \"/path/to/hook-client.js\" --tool copilot"
        }],
        "postToolUse": [{
-         "command": "node \"/path/to/hook-client.js\" --tool copilot --event PostToolUse",
-         "type": "command"
+         "type": "command",
+         "bash": "node \"/path/to/hook-client.js\" --tool copilot"
        }],
-       "agentStop": [{
-         "command": "node \"/path/to/hook-client.js\" --tool copilot --event Stop",
-         "type": "command"
+       "sessionEnd": [{
+         "type": "command",
+         "bash": "node \"/path/to/hook-client.js\" --tool copilot"
        }]
      }
    }
    ```
-3. Atomic write via tmp file + rename (consistent with claude.js pattern)
+   Hook entry format: `{ type: "command", bash: "<command>" }`. Events must be nested under a `"hooks"` key. Top-level `"version": 1` is required by Copilot CLI.
+3. Atomic write via tmp file + rename
 
-### removeHooks()
-1. Read `~/.copilot/config.json`
-2. Remove hook entries where command contains `--tool copilot`
-3. If hooks object is empty, delete the hooks field entirely
-4. Atomic write updated config
+### removeHooks(cwd)
+1. Read `<cwd>/.github/hooks/fleet.json`
+2. Verify it contains fleet hooks (bash field includes `claude-code-fleet`)
+3. Delete the file if it's fleet-managed
+
+### Hook installation timing
+- **`fleet run`**: Installs hooks in `workDir` before spawning Copilot process
+- **`fleet hooks install --tools copilot`**: Installs hooks in `process.cwd()` (user must run in target repo)
+- **`fleet start`** (observer): Skips Copilot hook installation — no CWD context. Users must install per-repo or use `fleet run`.
+
+### isHookInstalled(cwd)
+Check if `<cwd>/.github/hooks/fleet.json` exists and contains fleet hooks for all three events.
 
 ## normalizePayload(rawInput)
 
-Handles both camelCase and VS Code compatible payload formats:
+Handles Copilot CLI payload format:
 
 ```js
 normalizePayload(rawInput) {
-  const data = JSON.parse(rawInput);
+  // Event mapping: sessionStart → SessionStart, sessionEnd → Stop
+  const toolName = rawInput.toolName;                          // Copilot uses camelCase
+  const toolInput = JSON.parse(rawInput.toolArgs);             // toolArgs is JSON string
+  const toolOutput = rawInput.toolResult?.textResultForLlm;    // structured result
+  const reason = rawInput.reason;                              // sessionEnd reason
   return {
-    event: this._mapEvent(data.type),
-    toolName: data.toolName || data.tool_name,
-    input: data.input || data.tool_input || {},
-    output: data.output || data.tool_output || '',
-    sessionId: data.session_id || data.sessionId,
-    timestamp: data.timestamp || Date.now(),
+    event,
+    session_id: rawInput.sessionId,
+    cwd: rawInput.cwd,
+    timestamp: rawInput.timestamp || Date.now(),
+    tool_name: toolName,
+    tool_input: toolInput,
+    tool_output: toolOutput,
+    message: reason,
+    ...
   };
 }
 ```
 
-Event mapping covers both formats:
-- `sessionStart` / `SessionStart` → `SessionStart`
-- `postToolUse` / `PostToolUse` → `PostToolUse`
-- `agentStop` / `AgentStop` → `Stop`
+Key differences from Claude/Codex payloads:
+- `toolArgs` is a JSON string (not an object) — must parse
+- `toolResult` is structured with `resultType` and `textResultForLlm` fields
+- `sessionEnd` has `reason` field: `complete`, `error`, `abort`, `timeout`, `user_exit`
+- `sessionId` (camelCase) — Copilot uses camelCase consistently
 
 ## summarizeToolUse(toolName, toolInput)
 
@@ -121,9 +148,9 @@ Provides human-readable summaries for Observer Mode UI. Copilot uses a tool set 
 | File | Change |
 |------|--------|
 | `src/adapters/index.js` | Register `CopilotAdapter` at module load |
-| `src/master.js` | Add `'copilot.js'` to `ADAPTER_FILES` array |
+| `src/master.js` | Add `'copilot.js'` to `ADAPTER_FILES` array; skip Copilot in `ensureHooks()` and `removeHooks()` (per-repo only) |
+| `src/index.js` | `cmdModelAdd()` / `cmdModelEdit()` — copilot-specific required fields; `cmdRun()` — install per-repo hooks before spawning; `cmdHooksInstall/Status/Remove` — CWD-aware for Copilot |
 | `src/components/worker-card.mjs` | Add `copilot: 'blue'` to `TOOL_COLORS` |
-| `src/index.js` | `cmdModelAdd()` skip apiKey prompt for `copilot` tool |
 
 ### Unchanged Files
 | File | Reason |
@@ -135,7 +162,7 @@ Provides human-readable summaries for Observer Mode UI. Copilot uses a tool set 
 | `src/adapters/codex.js` | No changes to existing adapters |
 
 ## Out of Scope
-- Per-repo hook installation (`.github/hooks/*.json`) — can be added later
+- Global hook installation (`~/.copilot/config.json`) — Copilot CLI does not support global hooks
 - `preToolUse` event interception — Fleet doesn't intercept tool calls
 - `notification` / `errorOccurred` / `permissionRequest` events — not needed for Observer Mode
 - Generic hook framework abstraction — YAGNI with only 3 adapters
