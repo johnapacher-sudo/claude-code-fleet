@@ -175,14 +175,16 @@ async function cmdModelAdd(toolName) {
   }
 
   const placeholders = {
-    modelId: toolName === 'codex' ? 'e.g. gpt-5.4' : 'e.g. claude-opus-4-6',
-    apiKey: toolName === 'codex' ? 'sk-...' : 'sk-ant-...',
-    apiBaseUrl: toolName === 'codex' ? 'https://api.openai.com/v1' : 'https://api.anthropic.com',
+    modelId: toolName === 'codex' ? 'e.g. gpt-5.4' : toolName === 'copilot' ? 'e.g. gpt-4.1' : 'e.g. claude-opus-4-6',
+    apiKey: toolName === 'copilot' ? 'not required (GitHub OAuth)' : toolName === 'codex' ? 'sk-...' : 'sk-ant-...',
+    apiBaseUrl: toolName === 'codex' ? 'https://api.openai.com/v1' : toolName === 'copilot' ? 'not required' : 'https://api.anthropic.com',
   };
 
   const selectorPath = path.join(__dirname, 'components', 'selector.mjs');
   const inputMod = await import(selectorPath);
-  const allRequired = ['Name', 'Model ID', 'API Key', 'API Base URL'];
+  const allRequired = toolName === 'copilot'
+    ? ['Name', 'Model ID']
+    : ['Name', 'Model ID', 'API Key', 'API Base URL'];
 
   while (true) {
     const created = await inputMod.renderInput({
@@ -414,7 +416,7 @@ function cmdHooksInstall(toolsFilter) {
     const adaptersSrc = path.join(__dirname, 'adapters');
     const adaptersDst = path.join(HOOKS_DIR, 'adapters');
     if (!fs.existsSync(adaptersDst)) fs.mkdirSync(adaptersDst, { recursive: true });
-    for (const file of ['base.js', 'claude.js', 'codex.js', 'registry.js', 'index.js']) {
+    for (const file of ['base.js', 'claude.js', 'codex.js', 'copilot.js', 'registry.js', 'index.js']) {
       const src = path.join(adaptersSrc, file);
       if (fs.existsSync(src)) fs.copyFileSync(src, path.join(adaptersDst, file));
     }
@@ -597,7 +599,7 @@ ${ANSI.bold('Commands:')}
   hooks install       Install fleet hooks for all detected tools
   hooks remove        Remove fleet hooks for all tools
   hooks status        Show current hook installation status per tool
-  model add [tool]    Add a new model profile (claude, codex)
+  model add [tool]    Add a new model profile (claude, codex, copilot)
   model list          List all model profiles
   model edit          Edit a model profile (interactive)
   model delete        Delete a model profile (interactive)
@@ -606,6 +608,7 @@ ${ANSI.bold('Commands:')}
 ${ANSI.bold('Supported Tools:')}
   claude              Claude Code (anthropic)
   codex               Codex CLI (openai)
+  copilot             GitHub Copilot CLI (github)
 
 ${ANSI.bold('Options:')}
   --model <name>    Model profile name (for run command)
