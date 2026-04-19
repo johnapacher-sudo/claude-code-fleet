@@ -259,7 +259,7 @@ function ensureHooks() {
   const adaptersSrc = path.join(__dirname, 'adapters');
   const adaptersDst = path.join(HOOKS_DIR, 'adapters');
   if (!fs.existsSync(adaptersDst)) fs.mkdirSync(adaptersDst, { recursive: true });
-  for (const file of ['base.js', 'claude.js', 'codex.js', 'registry.js', 'index.js']) {
+  for (const file of ['base.js', 'claude.js', 'codex.js', 'copilot.js', 'registry.js', 'index.js']) {
     const src = path.join(adaptersSrc, file);
     if (fs.existsSync(src)) fs.copyFileSync(src, path.join(adaptersDst, file));
   }
