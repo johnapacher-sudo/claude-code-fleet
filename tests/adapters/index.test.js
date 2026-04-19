@@ -16,8 +16,8 @@ describe('Adapter index wiring', () => {
     registry = indexMod.registry;
   });
 
-  it('registers both claude and codex adapters', () => {
-    expect(registry.all()).toHaveLength(2);
+  it('registers claude, codex, and copilot adapters', () => {
+    expect(registry.all()).toHaveLength(3);
   });
 
   it('claude adapter is accessible by name', () => {
@@ -32,5 +32,12 @@ describe('Adapter index wiring', () => {
     expect(codex).toBeDefined();
     expect(codex.name).toBe('codex');
     expect(codex.displayName).toBe('Codex CLI');
+  });
+
+  it('copilot adapter is accessible by name', () => {
+    const copilot = registry.get('copilot');
+    expect(copilot).toBeDefined();
+    expect(copilot.name).toBe('copilot');
+    expect(copilot.displayName).toBe('GitHub Copilot');
   });
 });
