@@ -87,13 +87,13 @@ async function main() {
   }
 
   // SessionStart: persist session file
-  if (input.hook_event_name === 'SessionStart') {
+  if (payload.event === 'SessionStart') {
     try {
-      const sessionFile = path.join(SESSIONS_DIR, `${input.session_id}.json`);
+      const sessionFile = path.join(SESSIONS_DIR, `${payload.session_id}.json`);
       fs.mkdirSync(SESSIONS_DIR, { recursive: true });
       fs.writeFileSync(sessionFile, JSON.stringify({
-        sessionId: input.session_id,
-        cwd: input.cwd,
+        sessionId: payload.session_id,
+        cwd: payload.cwd,
         model: payload.model,
         tool: toolName,
         term_program: payload.term_program,
@@ -107,14 +107,14 @@ async function main() {
   }
 
   // Stop: update session file with last message
-  if (input.hook_event_name === 'Stop') {
+  if (payload.event === 'Stop') {
     try {
-      const sessionFile = path.join(SESSIONS_DIR, `${input.session_id}.json`);
+      const sessionFile = path.join(SESSIONS_DIR, `${payload.session_id}.json`);
       if (fs.existsSync(sessionFile)) {
         const data = JSON.parse(fs.readFileSync(sessionFile, 'utf-8'));
         data.stoppedAt = Date.now();
-        if (input.last_assistant_message) {
-          data.lastMessage = { text: input.last_assistant_message.slice(0, 500), time: Date.now() };
+        if (payload.last_assistant_message) {
+          data.lastMessage = { text: payload.last_assistant_message, time: Date.now() };
         }
         fs.writeFileSync(sessionFile, JSON.stringify(data, null, 2));
       }
@@ -136,11 +136,11 @@ async function main() {
       const config = notifier.loadNotifyConfig();
       if (!config.enabled) return;
 
-      const sid = input.session_id;
+      const sid = payload.session_id;
       const sound = config.sound;
       const displayName = adapter ? adapter.displayName : 'Claude Code';
 
-      if (input.hook_event_name === 'Stop') {
+      if (payload.event === 'Stop') {
         if (config.events.stop) {
           notifier.sendNotification({
             title: displayName,
@@ -153,7 +153,7 @@ async function main() {
         }
       }
 
-      if (input.hook_event_name === 'Notification' && config.events.notification) {
+      if (payload.event === 'Notification' && config.events.notification) {
         notifier.sendNotification({
           title: `${displayName} 通知`,
           body: payload.message,
