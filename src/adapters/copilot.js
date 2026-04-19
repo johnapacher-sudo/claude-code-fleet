@@ -112,8 +112,53 @@ class CopilotAdapter extends ToolAdapter {
     });
   }
 
-  normalizePayload(_rawInput) {
-    throw new Error('Not yet implemented');
+  normalizePayload(rawInput) {
+    // Normalize event type from camelCase or PascalCase to canonical form
+    const rawType = rawInput.type || '';
+    const EVENT_NORMALIZE = {
+      sessionStart: 'SessionStart',
+      SessionStart: 'SessionStart',
+      postToolUse: 'PostToolUse',
+      PostToolUse: 'PostToolUse',
+      agentStop: 'Stop',
+      AgentStop: 'Stop',
+    };
+    const event = EVENT_NORMALIZE[rawType] || rawType;
+
+    // Handle both camelCase and PascalCase field names
+    const sessionId = rawInput.session_id || rawInput.sessionId || null;
+    const toolName = rawInput.tool_name || rawInput.toolName || null;
+    const toolInput = rawInput.tool_input || rawInput.input || null;
+    const lastMsg = rawInput.last_assistant_message || rawInput.lastAssistantMessage || null;
+
+    return {
+      event,
+      session_id: sessionId,
+      cwd: rawInput.cwd || null,
+      timestamp: Date.now(),
+      model: rawInput.model || null,
+      pid: rawInput.pid || process.pid,
+      ppid: rawInput.ppid || process.ppid,
+      term_program: rawInput.term_program || process.env.TERM_PROGRAM || null,
+      iterm_session_id: rawInput.iterm_session_id || process.env.ITERM_SESSION_ID || null,
+      tool_name: toolName,
+      tool_input: toolInput,
+      last_assistant_message: lastMsg ? lastMsg.slice(0, 500) : null,
+      message: rawInput.message || null,
+    };
+  }
+
+  summarizeToolUse(toolName, toolInput) {
+    const input = toolInput || {};
+    switch (toolName) {
+      case 'Edit':  return `Edit ${path.basename(input.file_path || '')}`;
+      case 'Write': return `Write ${path.basename(input.file_path || '')}`;
+      case 'Read':  return `Read ${path.basename(input.file_path || '')}`;
+      case 'Bash':  return `Bash: ${(input.command || '').slice(0, 50)}`;
+      case 'Grep':  return `Grep "${(input.pattern || '').slice(0, 30)}"`;
+      case 'Glob':  return `Glob ${input.pattern || ''}`;
+      default:      return toolName;
+    }
   }
 }
 
