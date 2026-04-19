@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-04-19
+
+### Added
+
+- **GitHub Copilot CLI Adapter** — Full adapter support for `copilot` as a third tool alongside Claude Code and Codex CLI
+- CopilotAdapter: identity, `buildArgs`, `buildEnv` with model profile mapping and tests
+- CopilotAdapter: hook operations (`installHooks`, `removeHooks`, `isHookInstalled`) writing `~/.copilot/config.json`
+- CopilotAdapter: `normalizePayload` and `summarizeToolUse` for event canonicalization
+- Copilot tool color (GitHub blue) in TUI worker cards
+- CopilotAdapter registered in adapter index and included in master hook deployment
+- CLI support for `copilot` model profiles — help text and profile creation
+- Auto-migrate existing model profiles to include `tool` field
+
+### Fixed
+
+- Use normalized payload fields in hook-client for cross-tool compatibility
+- Show tool tag for all profiles including Claude
+
 ## [1.2.0] - 2026-04-16
 
 ### Added
@@ -117,7 +135,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Interactive CLI with arrow-key selector
 - Auto-publish to npm via GitHub Actions
 
-[1.2.0]: https://github.com/johnapacher-sudo/claude-code-fleet/compare/v1.1.2...HEAD
+[1.3.0]: https://github.com/johnapacher-sudo/claude-code-fleet/compare/v1.2.0...v1.3.0
+[1.2.0]: https://github.com/johnapacher-sudo/claude-code-fleet/compare/v1.1.2...v1.2.0
 [1.1.2]: https://github.com/johnapacher-sudo/claude-code-fleet/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/johnapacher-sudo/claude-code-fleet/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/johnapacher-sudo/claude-code-fleet/compare/v1.0.1...v1.1.0
