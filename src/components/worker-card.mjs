@@ -9,6 +9,7 @@ const h = React.createElement;
 const TOOL_COLORS = {
   claude: '#a78bfa',
   codex: '#4ade80',
+  copilot: '#58a6ff',
 };
 
 function getStatusIcon(status) {
