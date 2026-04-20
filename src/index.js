@@ -636,7 +636,8 @@ ${ANSI.bold('Usage:')}
 
 ${ANSI.bold('Commands:')}
   run                 Start a tool with a model profile
-  start               Start fleet observer (TUI dashboard)
+  start               Start a tool with a model profile (alias for run)
+  observer            Start fleet observer (TUI dashboard)
   hooks install       Install fleet hooks for all detected tools
   hooks remove        Remove fleet hooks for all tools
   hooks status        Show current hook installation status per tool
@@ -652,15 +653,16 @@ ${ANSI.bold('Supported Tools:')}
   copilot             GitHub Copilot CLI (github)
 
 ${ANSI.bold('Options:')}
-  --model <name>    Model profile name (for run command)
-  --cwd <path>      Working directory (for run command)
+  --model <name>    Model profile name (for run/start command)
+  --cwd <path>      Working directory (for run/start command)
   --proxy [url]     Enable HTTP proxy (uses profile proxy if url omitted)
   --tools <names>   Comma-separated tool names (for hooks install)
   -v, --version     Show version number
   -h, --help        Show this help
 
 ${ANSI.bold('Examples:')}
-  fleet start                       # Start observer dashboard
+  fleet start                       # Start with a model profile (interactive)
+  fleet observer                    # Start observer dashboard
   fleet run --model opus-prod       # Start with a model profile
   fleet run --proxy                 # Enable proxy using profile's saved proxy URL
   fleet run --proxy http://127.0.0.1:7890  # Enable proxy with explicit URL
@@ -716,14 +718,14 @@ function main() {
     return;
   }
 
-  // Run command
-  if (command === 'run') {
+  // Run / Start command (both launch a tool)
+  if (command === 'run' || command === 'start') {
     cmdRun(opts.model, opts.cwd, opts.proxy);
     return;
   }
 
-  // Observer start
-  if (command === 'start') {
+  // Observer (TUI dashboard)
+  if (command === 'observer') {
     cmdStart().catch(err => {
       console.error(ANSI.red(`Fatal: ${err.message}`));
       process.exit(1);

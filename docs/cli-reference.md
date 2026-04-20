@@ -6,9 +6,13 @@ Binary: `fleet` (entry: `src/index.js`)
 
 ### `fleet start`
 
-Start the observer dashboard (TUI). Long-running process.
+Start an interactive AI tool session with a model profile. Alias for `fleet run`.
 
-Auto-detects installed tools, deploys hooks, starts Unix socket server, renders real-time dashboard.
+```bash
+fleet start                      # Interactive model picker
+fleet start --model opus-prod    # Use specific profile
+fleet start --cwd /path/to/project
+```
 
 ### `fleet run` (default)
 
@@ -23,6 +27,12 @@ fleet run --cwd /path/to/project # Set working directory
 ```
 
 Spawns the tool process with `stdio: 'inherit'` so user interacts directly.
+
+### `fleet observer`
+
+Start the observer dashboard (TUI). Long-running process.
+
+Auto-detects installed tools, deploys hooks, starts Unix socket server, renders real-time dashboard.
 
 ### `fleet model add [tool]`
 
@@ -90,9 +100,9 @@ Config stored at `~/.config/claude-code-fleet/notify.json`.
 
 | Flag | Description |
 |------|-------------|
-| `--model <name>` | Model profile name (for `run`) |
-| `--cwd <path>` | Working directory (for `run`) |
-| `--proxy [url]` | Enable HTTP proxy (for `run`). Uses profile's saved proxy if url omitted |
+| `--model <name>` | Model profile name (for `run`/`start`) |
+| `--cwd <path>` | Working directory (for `run`/`start`) |
+| `--proxy [url]` | Enable HTTP proxy (for `run`/`start`). Uses profile's saved proxy if url omitted |
 | `--tools <names>` | Comma-separated tool names (for `hooks install`) |
 | `-v`, `--version` | Show version |
 | `-h`, `--help` | Show help |

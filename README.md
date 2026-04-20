@@ -49,7 +49,7 @@ fleet run --proxy http://127.0.0.1:7890
 fleet run --proxy=http://127.0.0.1:7890
 
 # Start the observer dashboard
-fleet start
+fleet observer
 
 # Configure desktop notifications
 fleet notify --on
@@ -62,12 +62,12 @@ fleet notify --no-sound
 
 Start a real-time terminal dashboard that observes all active AI coding tool processes.
 
-- `fleet start` launches the observer TUI
+- `fleet observer` launches the observer TUI
 - Automatically discovers all Claude Code and Codex CLI processes via async hooks
 - Shows session ID, model name, tool type, working directory, tool usage, and AI messages per worker
 - Workers appear when they start and are cleaned up when they stop (3+ hours inactive) or their process dies (30 minutes)
 - Session state is persisted to disk — workers survive master restarts
-- No config file required — just run `fleet start` and launch Claude Code or Codex processes
+- No config file required — just run `fleet observer` and launch Claude Code or Codex processes
 
 ### Model Profile Mode
 
@@ -83,7 +83,8 @@ Manage named model profiles and launch single interactive AI coding sessions.
 
 | Command | Aliases | Description |
 |---------|---------|-------------|
-| `fleet start` | — | Start observer dashboard (TUI) |
+| `fleet start` | — | Start an interactive session with a model profile (alias for `run`) |
+| `fleet observer` | — | Start observer dashboard (TUI) |
 | `fleet hooks install` | — | Install fleet hooks for all detected tools |
 | `fleet hooks remove` | — | Remove fleet hooks from all tools |
 | `fleet hooks status` | — | Show hook installation status per tool |

@@ -49,7 +49,7 @@ fleet run --proxy http://127.0.0.1:7890
 fleet run --proxy=http://127.0.0.1:7890
 
 # 启动观察者面板
-fleet start
+fleet observer
 
 # 配置桌面通知
 fleet notify --on
@@ -62,12 +62,12 @@ fleet notify --no-sound
 
 启动实时终端面板，观察所有活跃的 AI 编码工具进程。
 
-- `fleet start` 启动观察者 TUI
+- `fleet observer` 启动观察者 TUI
 - 自动发现所有 Claude Code 和 Codex CLI 进程（通过 async hooks）
 - 显示每个进程的会话 ID、模型名称、工具类型、工作目录、工具使用和 AI 消息
 - 进程启动时自动出现，停止时（3+ 小时无事件）或进程死亡后（30 分钟）自动清理
 - 会话状态持久化到磁盘 — 工作进程在 master 重启后依然存在
-- 无需配置文件 — 直接运行 `fleet start` 然后启动 Claude Code 或 Codex 进程即可
+- 无需配置文件 — 直接运行 `fleet observer` 然后启动 Claude Code 或 Codex 进程即可
 
 ### 模型配置模式
 
@@ -83,7 +83,8 @@ fleet notify --no-sound
 
 | 命令 | 别名 | 说明 |
 |------|------|------|
-| `fleet start` | — | 启动观察者面板（TUI） |
+| `fleet start` | — | 使用模型配置启动交互式会话（`run` 的别名） |
+| `fleet observer` | — | 启动观察者面板（TUI） |
 | `fleet hooks install` | — | 安装 fleet hooks 到所有已检测的工具 |
 | `fleet hooks remove` | — | 从所有工具移除 fleet hooks |
 | `fleet hooks status` | — | 按工具查看 hooks 安装状态 |
