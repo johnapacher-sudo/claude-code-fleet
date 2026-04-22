@@ -92,4 +92,63 @@ function deletePool(pools, name) {
   return pools.filter(p => p.name !== name);
 }
 
-module.exports = { loadPools, savePools, pickNext, addPool, deletePool };
+/**
+ * Run a tool with round-robin failover across models in a pool.
+ * Spawns the tool process, retries with next model on failure.
+ * Updates pool state on success; throws if all models exhausted.
+ */
+async function runWithFailover(modelsPath, poolName, passthrough, deps = {}) {
+  const spawn = deps.spawn || require('child_process').spawn;
+  const cwd = deps.cwd || process.cwd();
+
+  const raw = fs.readFileSync(modelsPath, 'utf-8');
+  const data = JSON.parse(raw);
+  const models = Array.isArray(data.models) ? data.models : [];
+  const pools = Array.isArray(data.pools) ? data.pools : [];
+  const pool = pools.find(p => p.name === poolName);
+
+  if (!pool) {
+    const names = pools.map(p => p.name);
+    throw new Error(
+      `Pool "${poolName}" not found. Available pools: ${names.length > 0 ? names.join(', ') : '(none)'}`
+    );
+  }
+
+  if (!pool.models || pool.models.length === 0) {
+    throw new Error(`Pool "${poolName}" has no models`);
+  }
+
+  const attempted = new Set();
+  const { registry } = require('./adapters');
+
+  while (attempted.size < pool.models.length) {
+    const { entry, index } = pickNext(pool, models);
+    attempted.add(index);
+
+    const adapter = registry.get(entry.tool || 'claude');
+    const adapterArgs = adapter.buildArgs(entry);
+    const allArgs = [...adapterArgs, ...passthrough];
+
+    const child = spawn(adapter.binary, allArgs, { cwd, stdio: 'inherit' });
+
+    const code = await new Promise(resolve => {
+      child.on('exit', resolve);
+    });
+
+    if (code === 0) {
+      pool.state.lastIndex = index;
+      const updatedPools = pools.map(p =>
+        p.name === poolName ? { ...p, state: { ...p.state, lastIndex: index } } : p
+      );
+      const updated = { ...data, pools: updatedPools };
+      fs.writeFileSync(modelsPath, JSON.stringify(updated, null, 2) + '\n');
+      return;
+    }
+
+    pool.state.lastIndex = index;
+  }
+
+  throw new Error(`All models failed in pool "${poolName}"`);
+}
+
+module.exports = { loadPools, savePools, pickNext, addPool, deletePool, runWithFailover };

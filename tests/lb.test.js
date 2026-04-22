@@ -4,7 +4,7 @@ import fs from 'fs';
 import os from 'os';
 
 describe('lb', () => {
-  let loadPools, savePools, pickNext, addPool, deletePool;
+  let loadPools, savePools, pickNext, addPool, deletePool, runWithFailover;
   let tmpDir, modelsPath;
 
   beforeEach(async () => {
@@ -14,6 +14,7 @@ describe('lb', () => {
     pickNext = mod.pickNext;
     addPool = mod.addPool;
     deletePool = mod.deletePool;
+    runWithFailover = mod.runWithFailover;
 
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-lb-test-'));
     modelsPath = path.join(tmpDir, 'models.json');
@@ -195,6 +196,94 @@ describe('lb', () => {
       const result = deletePool(pools, 'nonexistent');
       expect(result).toHaveLength(1);
       expect(result[0].name).toBe('keep');
+    });
+  });
+
+  // ─── runWithFailover ───────────────────────────────────────────────────────
+
+  describe('runWithFailover', () => {
+    const models = [
+      { name: 'alpha', tool: 'claude', model: 'model-a', apiKey: 'key-a' },
+      { name: 'beta', tool: 'claude', model: 'model-b', apiKey: 'key-b' },
+    ];
+
+    function writeConfig(modelsPathOverride, poolOverrides = {}) {
+      const pool = {
+        name: 'test-pool',
+        models: ['alpha', 'beta'],
+        strategy: 'round-robin',
+        state: { lastIndex: -1 },
+        ...poolOverrides,
+      };
+      fs.writeFileSync(
+        modelsPathOverride,
+        JSON.stringify({ models, pools: [pool] })
+      );
+    }
+
+    function makeMockSpawn(exitCodes) {
+      const spawned = [];
+      let callIdx = 0;
+      const mockSpawn = (cmd, args, opts) => {
+        const code = exitCodes[callIdx] ?? 0;
+        callIdx++;
+        spawned.push({ cmd, args, opts });
+        return {
+          on: (evt, cb) => {
+            if (evt === 'exit') setTimeout(() => cb(code), 10);
+          },
+        };
+      };
+      return { spawned, mockSpawn };
+    }
+
+    it('picks next model and spawns tool', async () => {
+      writeConfig(modelsPath);
+      const { spawned, mockSpawn } = makeMockSpawn([0]);
+
+      await runWithFailover(modelsPath, 'test-pool', ['-p', 'hello'], {
+        spawn: mockSpawn,
+      });
+
+      expect(spawned).toHaveLength(1);
+      // passthrough args should be appended after adapter args
+      expect(spawned[0].args).toEqual(
+        expect.arrayContaining(['-p', 'hello'])
+      );
+    });
+
+    it('failovers on non-zero exit', async () => {
+      writeConfig(modelsPath);
+      const { spawned, mockSpawn } = makeMockSpawn([1, 0]);
+
+      await runWithFailover(modelsPath, 'test-pool', ['-p', 'hello'], {
+        spawn: mockSpawn,
+      });
+
+      expect(spawned).toHaveLength(2);
+    });
+
+    it('throws when all models fail', async () => {
+      writeConfig(modelsPath);
+      const { mockSpawn } = makeMockSpawn([1, 1]);
+
+      await expect(
+        runWithFailover(modelsPath, 'test-pool', ['-p', 'hello'], {
+          spawn: mockSpawn,
+        })
+      ).rejects.toThrow(/All models failed/);
+    });
+
+    it('updates state.lastIndex on success', async () => {
+      writeConfig(modelsPath);
+      const { mockSpawn } = makeMockSpawn([0]);
+
+      await runWithFailover(modelsPath, 'test-pool', ['-p', 'hello'], {
+        spawn: mockSpawn,
+      });
+
+      const written = JSON.parse(fs.readFileSync(modelsPath, 'utf-8'));
+      expect(written.pools[0].state.lastIndex).toBe(0);
     });
   });
 });
