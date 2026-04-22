@@ -103,6 +103,38 @@ describe('parseArgs', () => {
     expect(r.opts.proxy).toBe('socks5://1.2.3.4:1080');
     expect(r.opts.cwd).toBe('/tmp');
   });
+
+  // -- passthrough args via --
+  it('collects passthrough args after --', () => {
+    const r = parseArgs(['--model', 'opus', '--', '-p', 'hello world']);
+    expect(r.opts.model).toBe('opus');
+    expect(r.opts.passthrough).toEqual(['-p', 'hello world']);
+  });
+  it('empty passthrough when -- is last', () => {
+    const r = parseArgs(['--model', 'opus', '--']);
+    expect(r.opts.model).toBe('opus');
+    expect(r.opts.passthrough).toEqual([]);
+  });
+  it('no passthrough when no --', () => {
+    const r = parseArgs(['--model', 'opus']);
+    expect(r.opts.passthrough).toBeUndefined();
+  });
+  it('passthrough preserves flags as-is', () => {
+    const r = parseArgs(['--', '--dangerously-skip-permissions', '-p', 'test']);
+    expect(r.opts.passthrough).toEqual(['--dangerously-skip-permissions', '-p', 'test']);
+  });
+  it('passthrough with --model and --cwd before --', () => {
+    const r = parseArgs(['run', '--model', 'x', '--cwd', '/tmp', '--', '--full-auto']);
+    expect(r.command).toBe('run');
+    expect(r.opts.model).toBe('x');
+    expect(r.opts.cwd).toBe('/tmp');
+    expect(r.opts.passthrough).toEqual(['--full-auto']);
+  });
+  it('passthrough captures everything including --like args after --', () => {
+    const r = parseArgs(['--', '--model', 'should-be-passthrough']);
+    expect(r.opts.passthrough).toEqual(['--model', 'should-be-passthrough']);
+    expect(r.opts.model).toBeUndefined();
+  });
 });
 
 // ─── Proxy function tests ────────────────────────────────────────────────────

@@ -368,7 +368,7 @@ async function cmdModelDelete() {
 
 // ─── Run command ─────────────────────────────────────────────────────────────
 
-async function cmdRun(modelName, cwd, proxyOpt) {
+async function cmdRun(modelName, cwd, proxyOpt, passthrough) {
   const data = loadModels();
   if (data.models.length === 0) {
     console.error(ANSI.yellow('No model profiles configured.'));
@@ -399,6 +399,7 @@ async function cmdRun(modelName, cwd, proxyOpt) {
   if (!fs.existsSync(workDir)) fs.mkdirSync(workDir, { recursive: true });
 
   const args = adapter.buildArgs(entry);
+  if (passthrough && passthrough.length > 0) args.push(...passthrough);
 
   const proxyUrl = resolveProxy(proxyOpt, entry.proxy);
   const proxyInfo = proxyUrl ? `  proxy: ${proxyUrl}` : '';
@@ -593,7 +594,10 @@ function parseArgs(argv) {
   let i = 0;
   while (i < argv.length) {
     const arg = argv[i];
-    if (arg === '--model' && argv[i + 1]) {
+    if (arg === '--') {
+      opts.passthrough = argv.slice(i + 1);
+      break;
+    } else if (arg === '--model' && argv[i + 1]) {
       opts.model = argv[++i];
     } else if (arg === '--cwd' && argv[i + 1]) {
       opts.cwd = argv[++i];
@@ -657,6 +661,7 @@ ${ANSI.bold('Options:')}
   --cwd <path>      Working directory (for run/start command)
   --proxy [url]     Enable HTTP proxy (uses profile proxy if url omitted)
   --tools <names>   Comma-separated tool names (for hooks install)
+  --                Pass remaining args to the underlying tool
   -v, --version     Show version number
   -h, --help        Show this help
 
@@ -664,6 +669,7 @@ ${ANSI.bold('Examples:')}
   fleet start                       # Start with a model profile (interactive)
   fleet observer                    # Start observer dashboard
   fleet run --model opus-prod       # Start with a model profile
+  fleet run --model opus-prod -- -p "hello"  # Pass extra args to the tool
   fleet run --proxy                 # Enable proxy using profile's saved proxy URL
   fleet run --proxy http://127.0.0.1:7890  # Enable proxy with explicit URL
   fleet hooks status                # Check hook installation status
@@ -720,7 +726,7 @@ function main() {
 
   // Run / Start command (both launch a tool)
   if (command === 'run' || command === 'start') {
-    cmdRun(opts.model, opts.cwd, opts.proxy);
+    cmdRun(opts.model, opts.cwd, opts.proxy, opts.passthrough);
     return;
   }
 

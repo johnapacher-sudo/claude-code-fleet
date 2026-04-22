@@ -48,6 +48,10 @@ fleet run --proxy
 fleet run --proxy http://127.0.0.1:7890
 fleet run --proxy=http://127.0.0.1:7890
 
+# Pass extra arguments to the underlying tool
+fleet run --model opus-prod -- -p "analyze this codebase"
+fleet run --model opus-prod -- --full-auto
+
 # Start the observer dashboard
 fleet observer
 
@@ -103,6 +107,7 @@ Manage named model profiles and launch single interactive AI coding sessions.
 | `--cwd <path>` | Set working directory (for `run` command) |
 | `--proxy [url]` | Enable HTTP proxy; uses profile's saved proxy URL if url omitted (for `run` command) |
 | `--tools <names>` | Comma-separated tool names to target (for `hooks install`) |
+| `--` | Pass all subsequent arguments to the underlying tool (for `run` command) |
 
 ## Observer Dashboard
 

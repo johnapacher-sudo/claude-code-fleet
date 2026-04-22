@@ -48,6 +48,10 @@ fleet run --proxy
 fleet run --proxy http://127.0.0.1:7890
 fleet run --proxy=http://127.0.0.1:7890
 
+# 透传额外参数到底层工具
+fleet run --model opus-prod -- -p "分析这个代码库"
+fleet run --model opus-prod -- --full-auto
+
 # 启动观察者面板
 fleet observer
 
@@ -103,6 +107,7 @@ fleet notify --no-sound
 | `--cwd <path>` | 设置工作目录（用于 `run` 命令） |
 | `--proxy [url]` | 启用 HTTP 代理；省略 url 时使用配置中保存的代理地址（用于 `run` 命令） |
 | `--tools <names>` | 逗号分隔的工具名称（用于 `hooks install`） |
+| `--` | 将后续所有参数透传到底层工具（用于 `run` 命令） |
 
 ## 观察者面板
 
