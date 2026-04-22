@@ -2,6 +2,24 @@
 
 Multi-tool AI coding process orchestrator. Run multiple Claude Code, GitHub Copilot CLI, and Codex CLI instances with different API keys, models, and endpoints in parallel. Real-time TUI observer dashboard. Extensible adapter architecture.
 
+## 严禁事项（AI 硬性约束）
+
+以下行为 **严禁** AI 自动执行，必须由用户显式触发且明确确认后方可操作：
+
+- **严禁自动修改 `package.json` 的 `version` 字段**。版本号变更会触发 CI/CD 构建与发布流水线，必须由人工决定。即使在以下场景也不得修改：
+  - 执行重构、新增功能、修复 bug 时
+  - 提交 commit、创建 PR/MR 时
+  - 更新 `CHANGELOG.md` 或文档时
+  - `npm install` / `npm update` 等命令副作用（如发现被自动改动，须回滚）
+  - 用户仅说"发布"、"release"、"升级版本"等模糊表述时（必须进一步确认目标版本号 major/minor/patch）
+- **严禁自动执行 `git commit` / `git push`**，除非用户明确要求"提交"、"commit"、"push"。
+- **严禁自动执行 `npm publish`** 或任何发布到 registry 的操作。
+
+若确实需要升版本，必须：
+1. 用户明确说出目标版本号或升级类型（major/minor/patch）
+2. AI 回显即将修改的 `version: "x.y.z" → "x.y.z"`，等待用户确认
+3. 确认后单独提交，commit message 需包含 `chore(release): vX.Y.Z`
+
 ## Architecture
 
 Three independent runtime contexts, one shared codebase:
