@@ -212,3 +212,27 @@ describe('applyProxy', () => {
     expect(env.HTTPS_PROXY).toBe('http://new:8080');
   });
 });
+
+describe('parseArgs — lb command', () => {
+  it('parses lb add', () => {
+    const r = parseArgs(['lb', 'add']);
+    expect(r.command).toBe('lb');
+    expect(r.subcommand).toBe('add');
+  });
+  it('parses lb list', () => {
+    const r = parseArgs(['lb', 'list']);
+    expect(r.command).toBe('lb');
+    expect(r.subcommand).toBe('list');
+  });
+  it('parses lb delete', () => {
+    const r = parseArgs(['lb', 'delete']);
+    expect(r.command).toBe('lb');
+    expect(r.subcommand).toBe('delete');
+  });
+  it('parses lb <pool-name> with passthrough', () => {
+    const r = parseArgs(['lb', 'my-pool', '--', '-p', 'hello']);
+    expect(r.command).toBe('lb');
+    expect(r.subcommand).toBe('my-pool');
+    expect(r.opts.passthrough).toEqual(['-p', 'hello']);
+  });
+});

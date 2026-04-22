@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const readline = require('readline');
 const { registry } = require('./adapters');
+const { loadPools, savePools, addPool, deletePool, runWithFailover } = require('./lb');
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -684,6 +685,99 @@ ${ANSI.bold('Examples:')}
 `);
 }
 
+// ─── Load Balancer commands ──────────────────────────────────────────────────
+
+async function cmdLbAdd() {
+  const data = loadModels();
+  if (data.models.length === 0) {
+    console.error(ANSI.yellow('No model profiles configured.'));
+    console.error(`Run ${ANSI.bold('fleet model add')} to create one.`);
+    process.exit(1);
+  }
+
+  const name = await ask('Pool name: ');
+  if (!name) {
+    console.error(ANSI.red('Pool name is required.'));
+    process.exit(1);
+  }
+
+  const selectedModels = [];
+  while (true) {
+    const remaining = data.models.filter(m => !selectedModels.includes(m.name));
+    if (remaining.length === 0) break;
+    const items = remaining.map(m => modelItem(m));
+    const pick = await selectFromList(items, `Add model to "${name}" (${selectedModels.length} selected)`);
+    if (!pick) break;
+    selectedModels.push(pick);
+  }
+
+  if (selectedModels.length === 0) {
+    console.error(ANSI.yellow('No models selected. Aborting.'));
+    return;
+  }
+
+  let pools = data.pools || [];
+  try {
+    pools = addPool(pools, data.models, name, selectedModels);
+  } catch (err) {
+    console.error(ANSI.red(err.message));
+    process.exit(1);
+  }
+  data.pools = pools;
+  saveModels(data);
+  console.log(ANSI.green(`\n  Pool "${name}" created with ${selectedModels.length} model(s): ${selectedModels.join(', ')}`));
+}
+
+async function cmdLbList() {
+  const data = loadModels();
+  const pools = data.pools || [];
+  if (pools.length === 0) {
+    console.log(ANSI.yellow('No load balancer pools configured.'));
+    console.log(`Run ${ANSI.bold('fleet lb add')} to create one.`);
+    return;
+  }
+  console.log(`\n\x1b[38;2;167;139;250m\x1b[1m⬢ Load Balancer Pools\x1b[0m  \x1b[38;2;82;82;82m${pools.length} configured\x1b[0m\n`);
+  for (const p of pools) {
+    const models = data.models || [];
+    const members = p.models.map(name => {
+      const m = models.find(mod => mod.name === name);
+      return m ? `${name} (${m.model || 'default'})` : `${name} \x1b[38;2;248;81;81m[missing]\x1b[0m`;
+    });
+    console.log(`  \x1b[38;2;167;139;250m│\x1b[0m \x1b[38;2;224;224;224m\x1b[1m${p.name}\x1b[0m  \x1b[38;2;82;82;82m${p.strategy}\x1b[0m`);
+    console.log(`    \x1b[38;2;139;155;168mmembers:\x1b[0m ${members.join(', ')}`);
+    console.log(`    \x1b[38;2;139;155;168mlast used:\x1b[0m ${p.state.lastIndex >= 0 ? p.models[p.state.lastIndex] : 'none'}`);
+  }
+}
+
+async function cmdLbDelete() {
+  const data = loadModels();
+  const pools = data.pools || [];
+  if (pools.length === 0) {
+    console.log(ANSI.yellow('No pools to delete.'));
+    return;
+  }
+  const items = pools.map(p => ({
+    label: p.name,
+    detail: `${p.models.length} model(s) · ${p.strategy}`,
+    value: p.name,
+  }));
+  const selected = await selectFromList(items, 'Select a pool to delete', true);
+  if (!selected) return;
+  data.pools = deletePool(pools, selected);
+  saveModels(data);
+  console.log(ANSI.green(`\n  Pool "${selected}" deleted.`));
+}
+
+async function cmdLbRun(poolName, passthrough, cwd) {
+  const modelsPath = getModelsPath();
+  try {
+    await runWithFailover(modelsPath, poolName, passthrough, { cwd });
+  } catch (err) {
+    console.error(ANSI.red(err.message));
+    process.exit(1);
+  }
+}
+
 function main() {
   const { command, subcommand, args, opts } = parseArgs(process.argv.slice(2));
 
@@ -696,6 +790,22 @@ function main() {
   if (opts.help || command === 'help') {
     printHelp();
     process.exit(0);
+  }
+
+  // Load Balancer commands
+  if (command === 'lb') {
+    const lbCmd = subcommand;
+    if (!lbCmd || lbCmd === 'list') {
+      cmdLbList();
+    } else if (lbCmd === 'add') {
+      cmdLbAdd();
+    } else if (lbCmd === 'delete') {
+      cmdLbDelete();
+    } else {
+      // treat subcommand as pool name for execution
+      cmdLbRun(lbCmd, opts.passthrough, opts.cwd);
+    }
+    return;
   }
 
   // Model management commands
