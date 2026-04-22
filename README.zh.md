@@ -52,6 +52,11 @@ fleet run --proxy=http://127.0.0.1:7890
 fleet run --model opus-prod -- -p "分析这个代码库"
 fleet run --model opus-prod -- --full-auto
 
+# 负载均衡
+fleet lb add                       # 交互式创建负载均衡池
+fleet lb list                      # 列出所有池子
+fleet lb my-pool -- -p "hello"     # 通过池子分发指令
+
 # 启动观察者面板
 fleet observer
 
@@ -98,6 +103,10 @@ fleet notify --no-sound
 | `fleet model edit` | — | 交互式编辑已有的模型配置 |
 | `fleet model delete` | `model rm` | 交互式删除模型配置 |
 | `fleet notify` | — | 配置桌面通知（`--on`、`--off`、`--sound`、`--no-sound`） |
+| `fleet lb add` | — | 创建负载均衡池 |
+| `fleet lb list` | — | 列出所有池子 |
+| `fleet lb delete` | — | 删除池子（交互式） |
+| `fleet lb <pool> -- <args>` | — | 通过池子运行，支持轮询和故障转移 |
 
 ### 全局选项
 

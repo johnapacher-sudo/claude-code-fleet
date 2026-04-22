@@ -52,6 +52,11 @@ fleet run --proxy=http://127.0.0.1:7890
 fleet run --model opus-prod -- -p "analyze this codebase"
 fleet run --model opus-prod -- --full-auto
 
+# Load balancer
+fleet lb add                       # Create a pool interactively
+fleet lb list                      # List all pools
+fleet lb my-pool -- -p "hello"     # Distribute instruction across pool
+
 # Start the observer dashboard
 fleet observer
 
@@ -98,6 +103,10 @@ Manage named model profiles and launch single interactive AI coding sessions.
 | `fleet model edit` | — | Interactively edit an existing model profile |
 | `fleet model delete` | `model rm` | Interactively delete a model profile |
 | `fleet notify` | — | Configure desktop notifications (`--on`, `--off`, `--sound`, `--no-sound`) |
+| `fleet lb add` | — | Create a load balancer pool |
+| `fleet lb list` | — | List all pools |
+| `fleet lb delete` | — | Delete a pool (interactive) |
+| `fleet lb <pool> -- <args>` | — | Run via pool with round-robin and failover |
 
 ### Global Options
 

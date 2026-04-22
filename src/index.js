@@ -651,6 +651,10 @@ ${ANSI.bold('Commands:')}
   model edit          Edit a model profile (interactive)
   model delete        Delete a model profile (interactive)
   notify              Configure desktop notifications
+  lb add              Create a load balancer pool
+  lb list             List all pools
+  lb delete           Delete a pool
+  lb <pool> -- <args> Run instruction via pool with round-robin
 
 ${ANSI.bold('Supported Tools:')}
   claude              Claude Code (anthropic)
@@ -682,6 +686,9 @@ ${ANSI.bold('Examples:')}
   fleet notify --on                 # Enable notifications
   fleet notify --no-sound           # Disable notification sound
   fleet notify --sound              # Enable notification sound
+  fleet lb add                       # Create a load balancer pool
+  fleet lb list                      # List all pools
+  fleet lb my-pool -- -p "hello"     # Run via pool with round-robin
 `);
 }
 
