@@ -134,9 +134,19 @@ async function runWithFailover(modelsPath, poolName, passthrough, deps = {}) {
 
     const adapter = registry.get(entry.tool || 'claude');
     const adapterArgs = adapter.buildArgs(entry);
-    const allArgs = [...adapterArgs, ...passthrough];
+    const allArgs = [...adapterArgs, ...(passthrough || [])];
 
-    const child = spawn(adapter.binary, allArgs, { cwd, stdio: 'inherit' });
+    const baseEnv = { ...process.env };
+    if (entry.proxy) {
+      const proxyUrl = /^https?:\/\//i.test(entry.proxy) ? entry.proxy : `http://${entry.proxy}`;
+      baseEnv.HTTP_PROXY = proxyUrl;
+      baseEnv.HTTPS_PROXY = proxyUrl;
+    }
+    const env = adapter.buildEnv(entry, baseEnv);
+
+    console.log(`\x1b[2m  [lb:${poolName}] ${adapter.displayName} → ${entry.model || 'default'} (${entry.name})${entry.proxy ? ` proxy: ${entry.proxy}` : ''}\x1b[0m`);
+
+    const child = spawn(adapter.binary, allArgs, { cwd, stdio: 'inherit', env });
 
     const code = await new Promise(resolve => {
       child.on('exit', resolve);
@@ -153,6 +163,7 @@ async function runWithFailover(modelsPath, poolName, passthrough, deps = {}) {
     }
 
     pool.state.lastIndex = index;
+    console.log(`\x1b[33m  [lb:${poolName}] ${entry.name} failed (exit ${code}), trying next...\x1b[0m`);
   }
 
   throw new Error(`All models failed in pool "${poolName}"`);

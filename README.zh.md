@@ -108,6 +108,45 @@ fleet notify --no-sound
 | `fleet lb delete` | — | 删除池子（交互式） |
 | `fleet lb <pool> -- <args>` | — | 通过池子运行，支持轮询和故障转移 |
 
+## 负载均衡
+
+通过轮询策略将指令分发到模型池中的不同配置。执行失败时自动切换到下一个模型重试。
+
+### 约束条件
+
+- 池子中的所有模型**必须使用同一种工具**（例如全部是 `claude`，或全部是 `codex`）。混合工具类型的池子在创建时会被拒绝。
+- 每个模型配置的代理设置会自动继承，无需额外参数。
+
+### 工作原理
+
+1. `fleet lb <pool> -- <args>` 从 `models.json` 读取池子配置
+2. 通过轮询选取下一个模型：`(lastIndex + 1) % pool.models.length`
+3. 通过适配器构建启动命令（`buildArgs` + `buildEnv`，包含代理设置）
+4. 执行工具进程，等待退出
+5. 成功（退出码 0）：将 `lastIndex` 持久化回 `models.json`
+6. 失败：推进到下一个模型重试
+7. 所有模型均失败：报错退出（退出码 1）
+
+`lastIndex` 存储在 `models.json` 中池子的 `state` 字段里，因此轮询状态在多次调用之间持久保存。
+
+### 数据模型
+
+池子与模型配置一起存储在 `models.json` 中：
+
+```json
+{
+  "models": [ ... ],
+  "pools": [
+    {
+      "name": "my-pool",
+      "models": ["GLM-wjs", "ADA-公司", "KIMI-部门"],
+      "strategy": "round-robin",
+      "state": { "lastIndex": -1 }
+    }
+  ]
+}
+```
+
 ### 全局选项
 
 | 参数 | 说明 |

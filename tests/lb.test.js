@@ -263,10 +263,44 @@ describe('lb', () => {
       });
 
       expect(spawned).toHaveLength(1);
-      // passthrough args should be appended after adapter args
       expect(spawned[0].args).toEqual(
         expect.arrayContaining(['-p', 'hello'])
       );
+    });
+
+    it('passes env from adapter.buildEnv to spawn', async () => {
+      writeConfig(modelsPath);
+      const { spawned, mockSpawn } = makeMockSpawn([0]);
+
+      await runWithFailover(modelsPath, 'test-pool', ['-p', 'hello'], {
+        spawn: mockSpawn,
+      });
+
+      expect(spawned[0].opts.env).toBeDefined();
+      expect(spawned[0].opts.env.FLEET_MODEL_NAME).toBe('alpha');
+    });
+
+    it('sets proxy env vars when model has proxy', async () => {
+      const proxyModels = [
+        { name: 'alpha', tool: 'claude', model: 'model-a', apiKey: 'key-a', proxy: 'proxy.example.com:8080' },
+      ];
+      const pool = { name: 'test-pool', models: ['alpha'], strategy: 'round-robin', state: { lastIndex: -1 } };
+      fs.writeFileSync(modelsPath, JSON.stringify({ models: proxyModels, pools: [pool] }));
+      const { spawned, mockSpawn } = makeMockSpawn([0]);
+
+      await runWithFailover(modelsPath, 'test-pool', [], { spawn: mockSpawn });
+
+      expect(spawned[0].opts.env.HTTP_PROXY).toBe('http://proxy.example.com:8080');
+      expect(spawned[0].opts.env.HTTPS_PROXY).toBe('http://proxy.example.com:8080');
+    });
+
+    it('does not set proxy env when model has no proxy', async () => {
+      writeConfig(modelsPath);
+      const { spawned, mockSpawn } = makeMockSpawn([0]);
+
+      await runWithFailover(modelsPath, 'test-pool', [], { spawn: mockSpawn });
+
+      expect(spawned[0].opts.env.HTTP_PROXY).toBeUndefined();
     });
 
     it('failovers on non-zero exit', async () => {

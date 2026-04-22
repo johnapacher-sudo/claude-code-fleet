@@ -108,6 +108,45 @@ Manage named model profiles and launch single interactive AI coding sessions.
 | `fleet lb delete` | — | Delete a pool (interactive) |
 | `fleet lb <pool> -- <args>` | — | Run via pool with round-robin and failover |
 
+## Load Balancer
+
+Distribute instructions across a pool of model profiles using round-robin. On failure, automatically failovers to the next model.
+
+### Constraints
+
+- All models in a pool **must use the same tool** (e.g., all `claude`, or all `codex`). Mixed tool pools are rejected at creation.
+- Each model profile's proxy settings are inherited automatically — no need for extra flags.
+
+### How It Works
+
+1. `fleet lb <pool> -- <args>` reads the pool from `models.json`
+2. Picks the next model via round-robin: `(lastIndex + 1) % pool.models.length`
+3. Builds the spawn command via the adapter (`buildArgs` + `buildEnv`, including proxy)
+4. Executes the tool process, waits for exit
+5. On success (exit 0): persists `lastIndex` back to `models.json`
+6. On failure: advances to the next model and retries
+7. If all models fail: reports error with exit code 1
+
+The `lastIndex` is stored in the pool's `state` field in `models.json`, so round-robin state persists across invocations.
+
+### Data Model
+
+Pools are stored alongside model profiles in `models.json`:
+
+```json
+{
+  "models": [ ... ],
+  "pools": [
+    {
+      "name": "my-pool",
+      "models": ["GLM-wjs", "ADA-公司", "KIMI-部门"],
+      "strategy": "round-robin",
+      "state": { "lastIndex": -1 }
+    }
+  ]
+}
+```
+
 ### Global Options
 
 | Flag | Description |

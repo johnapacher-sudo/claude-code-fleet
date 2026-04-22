@@ -810,7 +810,7 @@ function main() {
       cmdLbDelete();
     } else {
       // treat subcommand as pool name for execution
-      cmdLbRun(lbCmd, opts.passthrough, opts.cwd);
+      cmdLbRun(lbCmd, opts.passthrough || args, opts.cwd);
     }
     return;
   }
