@@ -165,6 +165,23 @@ describe('lb', () => {
     it('rejects empty model list', () => {
       expect(() => addPool([], models, 'p1', [])).toThrow(/at least one model/i);
     });
+
+    it('rejects mixed tool types in a pool', () => {
+      const mixed = [
+        { name: 'alpha', tool: 'claude', model: 'model-a' },
+        { name: 'beta', tool: 'codex', model: 'model-b' },
+      ];
+      expect(() => addPool([], mixed, 'p1', ['alpha', 'beta'])).toThrow(/same tool/i);
+    });
+
+    it('allows same tool type in a pool', () => {
+      const same = [
+        { name: 'alpha', tool: 'claude', model: 'model-a' },
+        { name: 'beta', tool: 'claude', model: 'model-b' },
+      ];
+      const result = addPool([], same, 'p1', ['alpha', 'beta']);
+      expect(result[0].models).toEqual(['alpha', 'beta']);
+    });
   });
 
   // ─── deletePool ───────────────────────────────────────────────────────────

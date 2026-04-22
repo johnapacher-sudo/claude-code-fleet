@@ -68,10 +68,17 @@ function addPool(pools, models, name, modelNames) {
     throw new Error(`Pool "${name}" already exists`);
   }
   const knownNames = new Set(models.map(m => m.name));
+  const resolved = [];
   for (const mn of modelNames) {
     if (!knownNames.has(mn)) {
       throw new Error(`Model "${mn}" not found in models`);
     }
+    resolved.push(models.find(m => m.name === mn));
+  }
+
+  const tools = new Set(resolved.map(m => m.tool || 'claude'));
+  if (tools.size > 1) {
+    throw new Error(`All models in a pool must use the same tool. Found: ${[...tools].join(', ')}`);
   }
 
   const newPool = {
