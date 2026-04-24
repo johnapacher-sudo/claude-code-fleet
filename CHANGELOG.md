@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.2] - 2026-04-24
+
+### Fixed
+
+- TUI viewport windowing — only render workers that fit terminal height, preventing scroll jitter with many workers
+- Rendering performance — React.memo on WorkerCard and Header, useMemo for worker lists, debounce increased to 200ms
+- Removed blocking `isProcessAlive()` syscall from render path (moved to periodic cleanup)
+- Reduced elapsed-time refresh interval from 5s to 10s
+
+### Added
+
+- Filter modes for observer TUI (`[f]` key): alive (default, hides offline), active, all
+- Process kill from TUI panel (`[d]` key) with inline confirmation — sends SIGTERM, then SIGKILL after 2s
+- Header shows separate counts for running, thinking, idle, and offline workers
+- Footer shows `[d] kill` and `[f] filter` keybinding hints
+
+## [1.4.1] - 2026-04-23
+
+### Fixed
+
+- Load balancer passes `env` and `proxy` from adapter.buildEnv to spawned tool process
+- Load balancer enforces same-tool constraint in pool creation
+
 ## [1.4.0] - 2026-04-22
 
 ### Added
@@ -160,6 +183,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Interactive CLI with arrow-key selector
 - Auto-publish to npm via GitHub Actions
 
+[1.4.2]: https://github.com/johnapacher-sudo/claude-code-fleet/compare/v1.4.1...v1.4.2
+[1.4.1]: https://github.com/johnapacher-sudo/claude-code-fleet/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/johnapacher-sudo/claude-code-fleet/compare/v1.3.2...v1.4.0
 [1.3.2]: https://github.com/johnapacher-sudo/claude-code-fleet/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/johnapacher-sudo/claude-code-fleet/compare/v1.3.0...v1.3.1
