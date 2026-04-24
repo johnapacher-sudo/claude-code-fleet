@@ -45,7 +45,7 @@ class TUI {
           process.stderr.write(`[fleet] render error: ${err.message}\n`);
         }
       }
-    }, 100);
+    }, 200);
   }
 }
 

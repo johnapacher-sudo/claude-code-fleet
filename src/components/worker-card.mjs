@@ -149,7 +149,7 @@ function LastActions({ actions, now }) {
   );
 }
 
-export function WorkerCard({ worker, now, isExpanded = false }) {
+function WorkerCardInner({ worker, now, isExpanded = false }) {
   const statusIcon = getStatusIcon(worker.computedStatus || worker.status);
   const elapsed = formatElapsed(now - worker.firstEventAt);
 
@@ -207,3 +207,19 @@ export function WorkerCard({ worker, now, isExpanded = false }) {
     !worker.currentTurn ? h(LastActions, { actions: worker.lastActions, now }) : null,
   );
 }
+
+export const WorkerCard = React.memo(WorkerCardInner, (prev, next) => {
+  const pw = prev.worker;
+  const nw = next.worker;
+  return pw.sessionId === nw.sessionId
+    && pw.computedStatus === nw.computedStatus
+    && pw.lastEventAt === nw.lastEventAt
+    && pw.awaitsInput === nw.awaitsInput
+    && pw.lastMessage === nw.lastMessage
+    && pw.currentTurn === nw.currentTurn
+    && pw.turns === nw.turns
+    && pw.lastActions === nw.lastActions
+    && pw.fleetModelName === nw.fleetModelName
+    && pw.modelName === nw.modelName
+    && prev.isExpanded === next.isExpanded;
+});

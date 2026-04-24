@@ -240,6 +240,27 @@ class Master {
     }
   }
 
+  killWorker(sessionId) {
+    const worker = this.workers.get(sessionId);
+    if (!worker || !worker.ppid) return false;
+
+    try { process.kill(worker.ppid, 'SIGTERM'); } catch { /* already dead */ }
+
+    worker.status = 'offline';
+    worker.lastEventAt = Date.now();
+    if (this.tui) this.tui.scheduleRender();
+
+    // Force kill after 2s if still alive
+    const ppid = worker.ppid;
+    setTimeout(() => {
+      if (this.isProcessAlive(ppid)) {
+        try { process.kill(ppid, 'SIGKILL'); } catch { /* already dead */ }
+      }
+    }, 2000);
+
+    return true;
+  }
+
   isProcessAlive(pid) {
     if (!pid) return false;
     try { process.kill(pid, 0); return true; } catch { return false; }

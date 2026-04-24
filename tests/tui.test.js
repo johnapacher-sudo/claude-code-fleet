@@ -70,13 +70,13 @@ describe('TUI', () => {
     vi.useRealTimers();
   });
 
-  it('scheduleRender calls _renderCallback after 100ms', () => {
+  it('scheduleRender calls _renderCallback after 200ms', () => {
     vi.useFakeTimers();
     tui.running = true;
     master._renderCallback = vi.fn();
     tui.scheduleRender();
     expect(master._renderCallback).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(100);
+    vi.advanceTimersByTime(200);
     expect(master._renderCallback).toHaveBeenCalled();
     expect(tui.renderTimer).toBeNull();
     vi.useRealTimers();

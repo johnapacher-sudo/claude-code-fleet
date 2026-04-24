@@ -31,8 +31,7 @@ describe('getWorkerStatus logic (via source)', () => {
     expect(src).toContain('thinking');
     expect(src).toContain('idle');
     expect(src).toContain('awaitsInput');
-    expect(src).toContain('isProcessAlive');
-    expect(src).toContain('statusOrder');
+    expect(src).toContain('STATUS_ORDER');
   });
 
   it('sorts active > thinking > idle > offline', async () => {
@@ -56,7 +55,7 @@ describe('getWorkerStatus logic (via source)', () => {
     const fs = await import('fs');
     const src = fs.default.readFileSync(new URL('../../src/components/app.mjs', import.meta.url), 'utf-8');
     expect(src).toContain('Math.min');
-    expect(src).toContain('workers.length');
+    expect(src).toContain('sortedWorkers.length');
   });
 
   it('handles keyboard j/k/Tab/q/enter/space/1-9', async () => {
