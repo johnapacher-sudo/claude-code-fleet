@@ -112,6 +112,44 @@ describe('CopilotAdapter', () => {
     });
   });
 
+  describe('classifyFailure', () => {
+    it('marks rate limit as failover-safe', () => {
+      expect(adapter.classifyFailure({
+        stderrSnippet: 'rate limit exceeded',
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+      })).toEqual({ kind: 'failover-safe', reason: 'rate_limited' });
+    });
+
+    it('marks connection failures as failover-safe', () => {
+      expect(adapter.classifyFailure({
+        stderrSnippet: 'econnrefused',
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+      })).toEqual({ kind: 'failover-safe', reason: 'upstream_unreachable' });
+    });
+
+    it('marks startup transient errors as failover-safe', () => {
+      expect(adapter.classifyFailure({
+        stderrSnippet: 'proxy connect aborted',
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+      })).toEqual({ kind: 'failover-safe', reason: 'startup_transient_error' });
+    });
+
+    it('falls back to terminal for unknown errors', () => {
+      expect(adapter.classifyFailure({
+        stderrSnippet: 'validation failed',
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+      })).toEqual({ kind: 'terminal', reason: 'unclassified' });
+    });
+  });
+
   // ── Task 2: hook operations (per-repo .github/hooks/fleet.json) ──
 
   describe('hook operations', () => {

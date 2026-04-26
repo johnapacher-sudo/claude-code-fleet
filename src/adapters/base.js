@@ -16,6 +16,9 @@ class ToolAdapter {
   installHooks(_hookClientPath) { throw new Error('ToolAdapter.installHooks must be implemented'); }
   removeHooks() { throw new Error('ToolAdapter.removeHooks must be implemented'); }
   normalizePayload(_rawInput) { throw new Error('ToolAdapter.normalizePayload must be implemented'); }
+  classifyFailure(_result) {
+    return { kind: 'terminal', reason: 'unclassified' };
+  }
 
   summarizeToolUse(toolName, _toolInput) {
     return toolName;

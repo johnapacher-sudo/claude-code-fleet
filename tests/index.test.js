@@ -8,6 +8,7 @@ const {
   stripAnsi, truncStr, modelMeta, modelWarning, modelItem,
   ANSI, GLOBAL_CONFIG_DIR, getModelsPath, parseArgs,
   normalizeProxyUrl, resolveProxy, applyProxy,
+  resolveLbFailoverMode, resolveLbMaxRetry, mapLbResultToExitCode, formatLbFailureSummary,
 } = mod;
 
 describe('stripAnsi', () => {
@@ -234,5 +235,117 @@ describe('parseArgs — lb command', () => {
     expect(r.command).toBe('lb');
     expect(r.subcommand).toBe('my-pool');
     expect(r.opts.passthrough).toEqual(['-p', 'hello']);
+  });
+  it('parses --failover for lb runs', () => {
+    const r = parseArgs(['lb', 'my-pool', '--failover', 'always', '--', '-p', 'hello']);
+    expect(r.opts.failover).toBe('always');
+    expect(r.opts.passthrough).toEqual(['-p', 'hello']);
+  });
+  it('parses --no-failover for lb runs', () => {
+    const r = parseArgs(['lb', 'my-pool', '--no-failover', '--', '-p', 'hello']);
+    expect(r.opts.noFailover).toBe(true);
+  });
+  it('parses --max-retry for lb runs', () => {
+    const r = parseArgs(['lb', 'my-pool', '--max-retry', '2', '--', '-p', 'hello']);
+    expect(r.opts.maxRetry).toBe('2');
+    expect(r.opts.passthrough).toEqual(['-p', 'hello']);
+  });
+});
+
+describe('resolveLbFailoverMode', () => {
+  it('defaults to safe-only', () => {
+    expect(resolveLbFailoverMode({})).toBe('safe-only');
+  });
+
+  it('maps --no-failover to off', () => {
+    expect(resolveLbFailoverMode({ noFailover: true })).toBe('off');
+  });
+
+  it('accepts explicit modes', () => {
+    expect(resolveLbFailoverMode({ failover: 'always' })).toBe('always');
+  });
+
+  it('rejects invalid values', () => {
+    expect(() => resolveLbFailoverMode({ failover: 'bogus' })).toThrow(/Invalid --failover value/);
+  });
+
+  it('rejects conflicting flags', () => {
+    expect(() => resolveLbFailoverMode({ noFailover: true, failover: 'always' })).toThrow(/cannot be combined/i);
+  });
+});
+
+describe('mapLbResultToExitCode', () => {
+  it('returns 0 for success', () => {
+    expect(mapLbResultToExitCode({ finalKind: 'success', finalReason: 'success' })).toBe(0);
+  });
+
+  it('returns 130 for user interruption', () => {
+    expect(mapLbResultToExitCode({ finalKind: 'terminal', finalReason: 'user_interrupted' })).toBe(130);
+  });
+
+  it('returns 1 for other failures', () => {
+    expect(mapLbResultToExitCode({ finalKind: 'exhausted', finalReason: 'recoverable_exhausted' })).toBe(1);
+  });
+});
+
+describe('resolveLbMaxRetry', () => {
+  it('defaults to 1', () => {
+    expect(resolveLbMaxRetry({})).toBe(1);
+  });
+
+  it('accepts zero', () => {
+    expect(resolveLbMaxRetry({ maxRetry: '0' })).toBe(0);
+  });
+
+  it('accepts explicit integers', () => {
+    expect(resolveLbMaxRetry({ maxRetry: '3' })).toBe(3);
+  });
+
+  it('rejects invalid values', () => {
+    expect(() => resolveLbMaxRetry({ maxRetry: '-1' })).toThrow(/Invalid --max-retry value/);
+    expect(() => resolveLbMaxRetry({ maxRetry: 'abc' })).toThrow(/Invalid --max-retry value/);
+  });
+});
+
+describe('formatLbFailureSummary', () => {
+  it('renders attempt lines for terminal failures', () => {
+    const summary = formatLbFailureSummary({
+      finalKind: 'terminal',
+      finalReason: 'terminal_failure',
+      attempts: [
+        { modelName: 'alpha', kind: 'terminal', reason: 'unclassified', exitCode: 1, signal: null },
+      ],
+    });
+    expect(summary).toContain('alpha');
+    expect(summary).toContain('terminal');
+    expect(summary).toContain('unclassified');
+  });
+
+  it('renders exhausted summaries with all attempts', () => {
+    const summary = formatLbFailureSummary({
+      finalKind: 'exhausted',
+      finalReason: 'recoverable_exhausted',
+      attempts: [
+        { modelName: 'alpha', kind: 'failover-safe', reason: 'rate_limited', exitCode: 1, signal: null },
+        { modelName: 'beta', kind: 'failover-safe', reason: 'rate_limited', exitCode: 1, signal: null },
+      ],
+    });
+    expect(summary).toContain('recoverable_exhausted');
+    expect(summary).toContain('alpha');
+    expect(summary).toContain('beta');
+  });
+
+  it('renders retry limit summaries', () => {
+    const summary = formatLbFailureSummary({
+      finalKind: 'policy_stopped',
+      finalReason: 'retry_limit',
+      attempts: [
+        { modelName: 'alpha', kind: 'failover-safe', reason: 'rate_limited', exitCode: 1, signal: null },
+        { modelName: 'beta', kind: 'failover-safe', reason: 'rate_limited', exitCode: 1, signal: null },
+      ],
+    });
+    expect(summary).toContain('retry_limit');
+    expect(summary).toContain('alpha');
+    expect(summary).toContain('beta');
   });
 });

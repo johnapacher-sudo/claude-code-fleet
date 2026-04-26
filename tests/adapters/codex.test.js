@@ -93,6 +93,44 @@ describe('CodexAdapter', () => {
     });
   });
 
+  describe('classifyFailure', () => {
+    it('marks rate limit as failover-safe', () => {
+      expect(adapter.classifyFailure({
+        stderrSnippet: 'rate limit exceeded',
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+      })).toEqual({ kind: 'failover-safe', reason: 'rate_limited' });
+    });
+
+    it('marks connection failures as failover-safe', () => {
+      expect(adapter.classifyFailure({
+        stderrSnippet: 'service unavailable',
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+      })).toEqual({ kind: 'failover-safe', reason: 'upstream_unreachable' });
+    });
+
+    it('marks startup transient errors as failover-safe', () => {
+      expect(adapter.classifyFailure({
+        stderrSnippet: 'socket hang up before startup completed',
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+      })).toEqual({ kind: 'failover-safe', reason: 'startup_transient_error' });
+    });
+
+    it('falls back to terminal for unknown errors', () => {
+      expect(adapter.classifyFailure({
+        stderrSnippet: 'validation failed',
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+      })).toEqual({ kind: 'terminal', reason: 'unclassified' });
+    });
+  });
+
   describe('hook operations', () => {
     let mockFs;
 

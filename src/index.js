@@ -84,6 +84,45 @@ function applyProxy(env, proxyUrl) {
   }
 }
 
+function resolveLbFailoverMode(opts) {
+  if (opts.noFailover && opts.failover && opts.failover !== 'off') {
+    throw new Error('--no-failover cannot be combined with --failover unless the mode is "off"');
+  }
+
+  if (opts.noFailover) return 'off';
+  if (!opts.failover) return 'safe-only';
+
+  if (!['off', 'safe-only', 'always'].includes(opts.failover)) {
+    throw new Error(`Invalid --failover value: ${opts.failover}`);
+  }
+
+  return opts.failover;
+}
+
+function resolveLbMaxRetry(opts) {
+  if (opts.maxRetry === undefined) return 1;
+  const value = Number.parseInt(String(opts.maxRetry), 10);
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(`Invalid --max-retry value: ${opts.maxRetry}`);
+  }
+  return value;
+}
+
+function mapLbResultToExitCode(result) {
+  if (result.finalKind === 'success') return 0;
+  if (result.finalKind === 'terminal' && result.finalReason === 'user_interrupted') return 130;
+  return 1;
+}
+
+function formatLbFailureSummary(result) {
+  return [
+    `lb result: ${result.finalKind} (${result.finalReason})`,
+    ...result.attempts.map(attempt =>
+      `- ${attempt.modelName}: ${attempt.kind} (${attempt.reason}) exit=${attempt.exitCode ?? 'null'} signal=${attempt.signal ?? 'null'}`
+    ),
+  ].join('\n');
+}
+
 // ─── Dependency checks ───────────────────────────────────────────────────────
 
 function checkToolDeps(toolName) {
@@ -613,6 +652,12 @@ function parseArgs(argv) {
       }
     } else if (arg === '--tools' && argv[i + 1]) {
       opts.tools = argv[++i];
+    } else if (arg === '--failover' && argv[i + 1]) {
+      opts.failover = argv[++i];
+    } else if (arg === '--max-retry' && argv[i + 1]) {
+      opts.maxRetry = argv[++i];
+    } else if (arg === '--no-failover') {
+      opts.noFailover = true;
     } else if (arg === '--version' || arg === '-v' || arg === '-V') {
       opts.version = true;
     } else if (arg === '--help' || arg === '-h') {
@@ -654,7 +699,7 @@ ${ANSI.bold('Commands:')}
   lb add              Create a load balancer pool
   lb list             List all pools
   lb delete           Delete a pool
-  lb <pool> -- <args> Run instruction via pool with round-robin
+  lb <pool> [--failover <mode> | --no-failover] [--max-retry <n>] -- <args> Run instruction via pool
 
 ${ANSI.bold('Supported Tools:')}
   claude              Claude Code (anthropic)
@@ -666,6 +711,9 @@ ${ANSI.bold('Options:')}
   --cwd <path>      Working directory (for run/start command)
   --proxy [url]     Enable HTTP proxy (uses profile proxy if url omitted)
   --tools <names>   Comma-separated tool names (for hooks install)
+  --failover <mode> Load balancer failover mode: off, safe-only, always
+  --max-retry <n>   Maximum extra model switches for lb runs (default: 1)
+  --no-failover     Disable load balancer failover (same as --failover off)
   --                Pass remaining args to the underlying tool
   -v, --version     Show version number
   -h, --help        Show this help
@@ -688,7 +736,9 @@ ${ANSI.bold('Examples:')}
   fleet notify --sound              # Enable notification sound
   fleet lb add                       # Create a load balancer pool
   fleet lb list                      # List all pools
-  fleet lb my-pool -- -p "hello"     # Run via pool with round-robin
+  fleet lb my-pool --failover safe-only -- -p "hello"
+  fleet lb my-pool --max-retry 2 -- -p "hello"
+  fleet lb my-pool --no-failover -- -p "hello"
 `);
 }
 
@@ -775,10 +825,16 @@ async function cmdLbDelete() {
   console.log(ANSI.green(`\n  Pool "${selected}" deleted.`));
 }
 
-async function cmdLbRun(poolName, passthrough, cwd) {
+async function cmdLbRun(poolName, passthrough, cwd, opts = {}) {
   const modelsPath = getModelsPath();
   try {
-    await runWithFailover(modelsPath, poolName, passthrough, { cwd });
+    const failover = resolveLbFailoverMode(opts);
+    const maxRetries = resolveLbMaxRetry(opts);
+    const result = await runWithFailover(modelsPath, poolName, passthrough, { cwd, failover, maxRetries });
+    if (result.finalKind !== 'success') {
+      console.error(ANSI.red(formatLbFailureSummary(result)));
+    }
+    process.exit(mapLbResultToExitCode(result));
   } catch (err) {
     console.error(ANSI.red(err.message));
     process.exit(1);
@@ -810,7 +866,7 @@ function main() {
       cmdLbDelete();
     } else {
       // treat subcommand as pool name for execution
-      cmdLbRun(lbCmd, opts.passthrough || args, opts.cwd);
+      cmdLbRun(lbCmd, opts.passthrough || args, opts.cwd, opts);
     }
     return;
   }
@@ -898,4 +954,5 @@ module.exports = {
   cmdHooksInstall, cmdHooksRemove,
   getNotifyConfigPath, loadNotifyConfigFile, saveNotifyConfig, cmdNotify,
   parseArgs, main, ANSI, GLOBAL_CONFIG_DIR,
+  resolveLbFailoverMode, resolveLbMaxRetry, mapLbResultToExitCode, formatLbFailureSummary,
 };

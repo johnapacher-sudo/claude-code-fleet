@@ -158,6 +158,25 @@ class CopilotAdapter extends ToolAdapter {
     };
   }
 
+  classifyFailure(result) {
+    const stderr = (result.stderrSnippet || '').toLowerCase();
+
+    if (/rate limit exceeded|rate_limit|too many requests|429/.test(stderr)) {
+      return { kind: 'failover-safe', reason: 'rate_limited' };
+    }
+    if (/tls handshake failed|socket hang up before startup completed|proxy connect aborted/.test(stderr)) {
+      return { kind: 'failover-safe', reason: 'startup_transient_error' };
+    }
+    if (/econnrefused|econnreset|upstream connect error|service unavailable/.test(stderr)) {
+      return { kind: 'failover-safe', reason: 'upstream_unreachable' };
+    }
+    if (/temporarily unavailable|try again later|auth.*temporar/.test(stderr)) {
+      return { kind: 'failover-safe', reason: 'auth_temporarily_unusable' };
+    }
+
+    return { kind: 'terminal', reason: 'unclassified' };
+  }
+
   summarizeToolUse(toolName, toolInput) {
     const input = toolInput || {};
     switch (toolName) {

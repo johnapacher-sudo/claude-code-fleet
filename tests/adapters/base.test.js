@@ -27,4 +27,12 @@ describe('ToolAdapter base class', () => {
     expect(adapter.summarizeToolUse('MyTool', { foo: 'bar' })).toBe('MyTool');
     expect(adapter.summarizeToolUse('Read', {})).toBe('Read');
   });
+
+  it('classifyFailure defaults to terminal/unclassified', () => {
+    adapter = new ToolAdapter();
+    expect(adapter.classifyFailure({ stderrSnippet: '' })).toEqual({
+      kind: 'terminal',
+      reason: 'unclassified',
+    });
+  });
 });

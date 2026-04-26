@@ -106,11 +106,11 @@ fleet notify --no-sound
 | `fleet lb add` | — | 创建负载均衡池 |
 | `fleet lb list` | — | 列出所有池子 |
 | `fleet lb delete` | — | 删除池子（交互式） |
-| `fleet lb <pool> -- <args>` | — | 通过池子运行，支持轮询和故障转移 |
+| `fleet lb <pool> [--failover <mode> \| --no-failover] [--max-retry <n>] -- <args>` | — | 通过池子运行，支持轮询和分类故障转移 |
 
 ## 负载均衡
 
-通过轮询策略将指令分发到模型池中的不同配置。执行失败时自动切换到下一个模型重试。
+通过轮询策略将指令分发到模型池中的不同配置。`fleet lb` 默认使用 `safe-only`，且 `--max-retry` 默认为 `1`：只有当失败被明确分类为可恢复时，才会切换到下一个模型，并且默认最多只额外切换 1 次。
 
 ### 约束条件
 
@@ -119,15 +119,18 @@ fleet notify --no-sound
 
 ### 工作原理
 
-1. `fleet lb <pool> -- <args>` 从 `models.json` 读取池子配置
+1. `fleet lb <pool> [--failover <mode> | --no-failover] [--max-retry <n>] -- <args>` 从 `models.json` 读取池子配置
 2. 通过轮询选取下一个模型：`(lastIndex + 1) % pool.models.length`
 3. 通过适配器构建启动命令（`buildArgs` + `buildEnv`，包含代理设置）
 4. 执行工具进程，等待退出
-5. 成功（退出码 0）：将 `lastIndex` 持久化回 `models.json`
-6. 失败：推进到下一个模型重试
-7. 所有模型均失败：报错退出（退出码 1）
+5. 成功时：将上一次成功路由到的模型索引持久化回 `models.json`
+6. 在 `safe-only` 下，只有被明确分类为可恢复的失败才会继续故障转移
+7. 使用 `--no-failover`（等价于 `--failover off`）可以关闭重试，使用 `--failover always` 可以保留旧的激进切换行为，使用 `--max-retry <n>` 可以限制额外的故障转移次数
+8. 启动阶段在首次 stdout/stderr 输出前的超时时间默认为 10 秒
+9. 失败尝试不会推进持久化的轮询指针
+10. 当出现 terminal / exhausted 失败时，会输出汇总并以退出码 1 结束
 
-`lastIndex` 存储在 `models.json` 中池子的 `state` 字段里，因此轮询状态在多次调用之间持久保存。
+`lastIndex` 存储在 `models.json` 中池子的 `state` 字段里，记录的是上一次**成功路由**到的模型，而不是上一次尝试过的模型。
 
 ### 数据模型
 

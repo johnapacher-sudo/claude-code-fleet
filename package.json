@@ -1,6 +1,6 @@
 {
   "name": "@dking/claude-code-fleet",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "Run multiple Claude Code, GitHub Copilot CLI, and Codex CLI instances with different API keys and models in parallel",
   "main": "src/index.js",
   "bin": {

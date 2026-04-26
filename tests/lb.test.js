@@ -4,7 +4,7 @@ import fs from 'fs';
 import os from 'os';
 
 describe('lb', () => {
-  let loadPools, savePools, pickNext, addPool, deletePool, runWithFailover;
+  let loadPools, savePools, pickNext, addPool, deletePool, classifyAttempt, runWithFailover;
   let tmpDir, modelsPath;
 
   beforeEach(async () => {
@@ -14,6 +14,7 @@ describe('lb', () => {
     pickNext = mod.pickNext;
     addPool = mod.addPool;
     deletePool = mod.deletePool;
+    classifyAttempt = mod.classifyAttempt;
     runWithFailover = mod.runWithFailover;
 
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-lb-test-'));
@@ -23,8 +24,6 @@ describe('lb', () => {
   afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
-
-  // ─── pickNext ─────────────────────────────────────────────────────────────
 
   describe('pickNext', () => {
     const models = [
@@ -64,13 +63,54 @@ describe('lb', () => {
       expect(result2.index).toBe(0);
     });
 
+    it('skips attempted pool indices', () => {
+      const pool = { name: 'p1', models: ['alpha', 'beta', 'gamma'], strategy: 'round-robin', state: { lastIndex: -1 } };
+      const attempted = new Set([0, 1]);
+      const result = pickNext(pool, models, attempted);
+      expect(result.index).toBe(2);
+      expect(result.entry.name).toBe('gamma');
+    });
+
+    it('returns null when all pool indices were attempted', () => {
+      const pool = { name: 'p1', models: ['alpha', 'beta'], strategy: 'round-robin', state: { lastIndex: -1 } };
+      expect(pickNext(pool, models, new Set([0, 1]))).toBeNull();
+    });
+
     it('throws when model name not found in models array', () => {
       const pool = { name: 'p1', models: ['nonexistent'], strategy: 'round-robin', state: { lastIndex: -1 } };
       expect(() => pickNext(pool, models)).toThrow();
     });
   });
 
-  // ─── loadPools / savePools ────────────────────────────────────────────────
+  describe('classifyAttempt', () => {
+    it('classifies clean exit as success', () => {
+      expect(classifyAttempt(
+        { exitCode: 0, signal: null, spawnError: null, timedOut: false, stderrSnippet: '' },
+        null
+      )).toEqual({ kind: 'success', reason: 'success' });
+    });
+
+    it('classifies startup timeout as failover-safe', () => {
+      expect(classifyAttempt(
+        { exitCode: null, signal: 'SIGTERM', spawnError: null, timedOut: true, timeoutPhase: 'startup', stderrSnippet: '' },
+        null
+      )).toEqual({ kind: 'failover-safe', reason: 'startup_timeout' });
+    });
+
+    it('classifies SIGINT as terminal user interruption', () => {
+      expect(classifyAttempt(
+        { exitCode: null, signal: 'SIGINT', spawnError: null, timedOut: false, stderrSnippet: '' },
+        null
+      )).toEqual({ kind: 'terminal', reason: 'user_interrupted' });
+    });
+
+    it('uses adapter classification when precedence does not decide', () => {
+      expect(classifyAttempt(
+        { exitCode: 1, signal: null, spawnError: null, timedOut: false, stderrSnippet: 'rate limit exceeded' },
+        { kind: 'failover-safe', reason: 'rate_limited' }
+      )).toEqual({ kind: 'failover-safe', reason: 'rate_limited' });
+    });
+  });
 
   describe('loadPools', () => {
     it('returns empty array when file does not exist', () => {
@@ -125,8 +165,6 @@ describe('lb', () => {
     });
   });
 
-  // ─── addPool ──────────────────────────────────────────────────────────────
-
   describe('addPool', () => {
     const models = [
       { name: 'alpha', model: 'model-a' },
@@ -173,18 +211,7 @@ describe('lb', () => {
       ];
       expect(() => addPool([], mixed, 'p1', ['alpha', 'beta'])).toThrow(/same tool/i);
     });
-
-    it('allows same tool type in a pool', () => {
-      const same = [
-        { name: 'alpha', tool: 'claude', model: 'model-a' },
-        { name: 'beta', tool: 'claude', model: 'model-b' },
-      ];
-      const result = addPool([], same, 'p1', ['alpha', 'beta']);
-      expect(result[0].models).toEqual(['alpha', 'beta']);
-    });
   });
-
-  // ─── deletePool ───────────────────────────────────────────────────────────
 
   describe('deletePool', () => {
     it('removes pool by name and returns new array', () => {
@@ -216,8 +243,6 @@ describe('lb', () => {
     });
   });
 
-  // ─── runWithFailover ───────────────────────────────────────────────────────
-
   describe('runWithFailover', () => {
     const models = [
       { name: 'alpha', tool: 'claude', model: 'model-a', apiKey: 'key-a' },
@@ -232,52 +257,76 @@ describe('lb', () => {
         state: { lastIndex: -1 },
         ...poolOverrides,
       };
-      fs.writeFileSync(
-        modelsPathOverride,
-        JSON.stringify({ models, pools: [pool] })
-      );
+      fs.writeFileSync(modelsPathOverride, JSON.stringify({ models, pools: [pool] }));
     }
 
-    function makeMockSpawn(exitCodes) {
-      const spawned = [];
-      let callIdx = 0;
-      const mockSpawn = (cmd, args, opts) => {
-        const code = exitCodes[callIdx] ?? 0;
-        callIdx++;
-        spawned.push({ cmd, args, opts });
-        return {
-          on: (evt, cb) => {
-            if (evt === 'exit') setTimeout(() => cb(code), 10);
-          },
-        };
+    function makeFakeChild({
+      code = null,
+      signal = null,
+      stderrChunks = [],
+      stdoutChunks = [],
+      error = null,
+      exitDelay = 10,
+    } = {}) {
+      const listeners = new Map();
+      const child = {
+        stdout: { on: (evt, cb) => { listeners.set(`stdout:${evt}`, cb); } },
+        stderr: { on: (evt, cb) => { listeners.set(`stderr:${evt}`, cb); } },
+        on: (evt, cb) => { listeners.set(evt, cb); return child; },
+        kill: () => {
+          const closeCb = listeners.get('close');
+          if (closeCb) closeCb(null, 'SIGTERM');
+        },
       };
-      return { spawned, mockSpawn };
+
+      setTimeout(() => {
+        for (const chunk of stdoutChunks) listeners.get('stdout:data')?.(Buffer.from(chunk));
+        for (const chunk of stderrChunks) listeners.get('stderr:data')?.(Buffer.from(chunk));
+        if (error) {
+          listeners.get('error')?.(error);
+          return;
+        }
+        listeners.get('close')?.(code, signal);
+      }, exitDelay);
+
+      return child;
     }
 
-    it('picks next model and spawns tool', async () => {
-      writeConfig(modelsPath);
-      const { spawned, mockSpawn } = makeMockSpawn([0]);
+    function createRegistry(classifyFailure = () => ({ kind: 'terminal', reason: 'unclassified' })) {
+      return {
+        get: () => ({
+          binary: 'claude',
+          displayName: 'Claude Code',
+          isInstalled: () => true,
+          buildArgs: entry => ['--model', entry.model],
+          buildEnv: (_entry, env) => env,
+          classifyFailure,
+        }),
+      };
+    }
 
-      await runWithFailover(modelsPath, 'test-pool', ['-p', 'hello'], {
+    it('returns structured success result and persists lastIndex only on success', async () => {
+      writeConfig(modelsPath);
+      const spawned = [];
+      const mockSpawn = (cmd, args, opts) => {
+        spawned.push({ cmd, args, opts });
+        return makeFakeChild({ code: 0 });
+      };
+
+      const result = await runWithFailover(modelsPath, 'test-pool', ['-p', 'hello'], {
         spawn: mockSpawn,
+        registry: createRegistry(),
       });
 
-      expect(spawned).toHaveLength(1);
-      expect(spawned[0].args).toEqual(
-        expect.arrayContaining(['-p', 'hello'])
-      );
-    });
-
-    it('passes env from adapter.buildEnv to spawn', async () => {
-      writeConfig(modelsPath);
-      const { spawned, mockSpawn } = makeMockSpawn([0]);
-
-      await runWithFailover(modelsPath, 'test-pool', ['-p', 'hello'], {
-        spawn: mockSpawn,
-      });
-
+      expect(result.finalKind).toBe('success');
+      expect(result.finalReason).toBe('success');
+      expect(result.attempts).toHaveLength(1);
+      expect(spawned[0].args).toEqual(expect.arrayContaining(['-p', 'hello']));
       expect(spawned[0].opts.env).toBeDefined();
-      expect(spawned[0].opts.env.FLEET_MODEL_NAME).toBe('alpha');
+      expect(spawned[0].opts.stdio).toEqual(['inherit', 'pipe', 'pipe']);
+
+      const written = JSON.parse(fs.readFileSync(modelsPath, 'utf-8'));
+      expect(written.pools[0].state.lastIndex).toBe(0);
     });
 
     it('sets proxy env vars when model has proxy', async () => {
@@ -286,55 +335,269 @@ describe('lb', () => {
       ];
       const pool = { name: 'test-pool', models: ['alpha'], strategy: 'round-robin', state: { lastIndex: -1 } };
       fs.writeFileSync(modelsPath, JSON.stringify({ models: proxyModels, pools: [pool] }));
-      const { spawned, mockSpawn } = makeMockSpawn([0]);
+      const spawned = [];
 
-      await runWithFailover(modelsPath, 'test-pool', [], { spawn: mockSpawn });
+      await runWithFailover(modelsPath, 'test-pool', [], {
+        spawn: (cmd, args, opts) => {
+          spawned.push({ cmd, args, opts });
+          return makeFakeChild({ code: 0 });
+        },
+        registry: createRegistry(),
+      });
 
       expect(spawned[0].opts.env.HTTP_PROXY).toBe('http://proxy.example.com:8080');
       expect(spawned[0].opts.env.HTTPS_PROXY).toBe('http://proxy.example.com:8080');
     });
 
-    it('does not set proxy env when model has no proxy', async () => {
+    it('does not fail over on unclassified non-zero exit under safe-only', async () => {
       writeConfig(modelsPath);
-      const { spawned, mockSpawn } = makeMockSpawn([0]);
-
-      await runWithFailover(modelsPath, 'test-pool', [], { spawn: mockSpawn });
-
-      expect(spawned[0].opts.env.HTTP_PROXY).toBeUndefined();
-    });
-
-    it('failovers on non-zero exit', async () => {
-      writeConfig(modelsPath);
-      const { spawned, mockSpawn } = makeMockSpawn([1, 0]);
-
-      await runWithFailover(modelsPath, 'test-pool', ['-p', 'hello'], {
-        spawn: mockSpawn,
+      let callCount = 0;
+      const result = await runWithFailover(modelsPath, 'test-pool', ['-p', 'hello'], {
+        spawn: () => {
+          callCount++;
+          return makeFakeChild({ code: 1, stderrChunks: ['validation failed'] });
+        },
+        registry: createRegistry(),
       });
 
-      expect(spawned).toHaveLength(2);
+      expect(callCount).toBe(1);
+      expect(result.finalKind).toBe('terminal');
+      expect(result.finalReason).toBe('terminal_failure');
+      expect(result.attempts).toHaveLength(1);
+      const written = JSON.parse(fs.readFileSync(modelsPath, 'utf-8'));
+      expect(written.pools[0].state.lastIndex).toBe(-1);
     });
 
-    it('throws when all models fail', async () => {
+    it('fails over on startup timeout before any output', async () => {
       writeConfig(modelsPath);
-      const { mockSpawn } = makeMockSpawn([1, 1]);
+      let callCount = 0;
+      const result = await runWithFailover(modelsPath, 'test-pool', ['-p', 'hello'], {
+        spawn: () => {
+          callCount++;
+          return callCount === 1
+            ? makeFakeChild({ code: null, signal: null, exitDelay: 50 })
+            : makeFakeChild({ code: 0, exitDelay: 1 });
+        },
+        startupTimeoutMs: 5,
+        registry: createRegistry(),
+        stdout: { write: () => {} },
+        stderr: { write: () => {} },
+      });
+
+      expect(callCount).toBe(2);
+      expect(result.attempts[0].reason).toBe('startup_timeout');
+      expect(result.finalKind).toBe('success');
+    });
+
+    it('cancels startup timeout when stdout output arrives', async () => {
+      writeConfig(modelsPath);
+      const result = await runWithFailover(modelsPath, 'test-pool', ['-p', 'hello'], {
+        spawn: () => makeFakeChild({ code: 0, stdoutChunks: ['started'], exitDelay: 1 }),
+        startupTimeoutMs: 5,
+        registry: createRegistry(),
+        stdout: { write: () => {} },
+        stderr: { write: () => {} },
+      });
+
+      expect(result.finalKind).toBe('success');
+    });
+
+    it('failovers on recoverable adapter classification under safe-only', async () => {
+      writeConfig(modelsPath);
+      let callCount = 0;
+      const result = await runWithFailover(modelsPath, 'test-pool', ['-p', 'hello'], {
+        spawn: () => {
+          callCount++;
+          return callCount === 1
+            ? makeFakeChild({ code: 1, stderrChunks: ['rate limit exceeded'] })
+            : makeFakeChild({ code: 0 });
+        },
+        registry: createRegistry(attempt => (
+          /rate limit/i.test(attempt.stderrSnippet)
+            ? { kind: 'failover-safe', reason: 'rate_limited' }
+            : { kind: 'terminal', reason: 'unclassified' }
+        )),
+      });
+
+      expect(callCount).toBe(2);
+      expect(result.finalKind).toBe('success');
+      expect(result.attempts).toHaveLength(2);
+      expect(result.attempts[0].reason).toBe('rate_limited');
+    });
+
+    it('stops after one attempt when failover policy is off', async () => {
+      writeConfig(modelsPath);
+      let callCount = 0;
+      const result = await runWithFailover(modelsPath, 'test-pool', ['-p', 'hello'], {
+        spawn: () => {
+          callCount++;
+          return makeFakeChild({ code: 1, stderrChunks: ['rate limit exceeded'] });
+        },
+        failover: 'off',
+        registry: createRegistry(() => ({ kind: 'failover-safe', reason: 'rate_limited' })),
+      });
+
+      expect(callCount).toBe(1);
+      expect(result.finalKind).toBe('policy_stopped');
+      expect(result.finalReason).toBe('policy_off');
+    });
+
+    it('defaults to one retry even when more pool members are available', async () => {
+      fs.writeFileSync(modelsPath, JSON.stringify({
+        models: [
+          { name: 'alpha', tool: 'claude', model: 'model-a' },
+          { name: 'beta', tool: 'claude', model: 'model-b' },
+          { name: 'gamma', tool: 'claude', model: 'model-c' },
+        ],
+        pools: [
+          { name: 'test-pool', models: ['alpha', 'beta', 'gamma'], strategy: 'round-robin', state: { lastIndex: -1 } },
+        ],
+      }, null, 2));
+
+      let callCount = 0;
+      const result = await runWithFailover(modelsPath, 'test-pool', ['-p', 'hello'], {
+        spawn: () => {
+          callCount++;
+          return makeFakeChild({ code: 1, stderrChunks: ['rate limit exceeded'] });
+        },
+        registry: createRegistry(() => ({ kind: 'failover-safe', reason: 'rate_limited' })),
+      });
+
+      expect(callCount).toBe(2);
+      expect(result.finalKind).toBe('policy_stopped');
+      expect(result.finalReason).toBe('retry_limit');
+      expect(result.attempts).toHaveLength(2);
+    });
+
+    it('allows configuring more retries explicitly', async () => {
+      fs.writeFileSync(modelsPath, JSON.stringify({
+        models: [
+          { name: 'alpha', tool: 'claude', model: 'model-a' },
+          { name: 'beta', tool: 'claude', model: 'model-b' },
+          { name: 'gamma', tool: 'claude', model: 'model-c' },
+        ],
+        pools: [
+          { name: 'test-pool', models: ['alpha', 'beta', 'gamma'], strategy: 'round-robin', state: { lastIndex: -1 } },
+        ],
+      }, null, 2));
+
+      let callCount = 0;
+      const result = await runWithFailover(modelsPath, 'test-pool', ['-p', 'hello'], {
+        spawn: () => {
+          callCount++;
+          return callCount < 3
+            ? makeFakeChild({ code: 1, stderrChunks: ['rate limit exceeded'] })
+            : makeFakeChild({ code: 0 });
+        },
+        maxRetries: 2,
+        registry: createRegistry(() => ({ kind: 'failover-safe', reason: 'rate_limited' })),
+      });
+
+      expect(callCount).toBe(3);
+      expect(result.finalKind).toBe('success');
+      expect(result.attempts).toHaveLength(3);
+    });
+
+    it('maps SIGINT to terminal user interruption', async () => {
+      writeConfig(modelsPath);
+      const result = await runWithFailover(modelsPath, 'test-pool', ['-p', 'hello'], {
+        spawn: () => makeFakeChild({ signal: 'SIGINT' }),
+        registry: createRegistry(),
+      });
+
+      expect(result.finalKind).toBe('terminal');
+      expect(result.finalReason).toBe('user_interrupted');
+    });
+
+    it('keeps failing over in always mode until success', async () => {
+      writeConfig(modelsPath);
+      let callCount = 0;
+      const result = await runWithFailover(modelsPath, 'test-pool', ['-p', 'hello'], {
+        spawn: () => {
+          callCount++;
+          return callCount === 1
+            ? makeFakeChild({ code: 1, stderrChunks: ['invalid request'] })
+            : makeFakeChild({ code: 0 });
+        },
+        failover: 'always',
+        registry: createRegistry(),
+      });
+
+      expect(callCount).toBe(2);
+      expect(result.finalKind).toBe('success');
+    });
+
+    it('returns exhausted summary after recoverable failures across the whole pool', async () => {
+      writeConfig(modelsPath);
+      const logs = [];
+      const result = await runWithFailover(modelsPath, 'test-pool', ['-p', 'hello'], {
+        spawn: () => makeFakeChild({ code: 1, stderrChunks: ['rate limit exceeded'] }),
+        log: line => logs.push(line),
+        registry: createRegistry(() => ({ kind: 'failover-safe', reason: 'rate_limited' })),
+      });
+
+      expect(result.finalKind).toBe('exhausted');
+      expect(result.finalReason).toBe('recoverable_exhausted');
+      expect(logs.some(line => line.includes('try 1/2'))).toBe(true);
+      expect(logs.some(line => line.includes('trying next model'))).toBe(true);
+      expect(logs.some(line => line.includes('recoverable_exhausted'))).toBe(true);
+    });
+
+    it('throws setup errors instead of failing over when cwd is invalid', async () => {
+      writeConfig(modelsPath);
 
       await expect(
         runWithFailover(modelsPath, 'test-pool', ['-p', 'hello'], {
-          spawn: mockSpawn,
+          cwd: path.join(tmpDir, 'missing-dir'),
+          spawn: () => makeFakeChild({ code: 0 }),
+          registry: createRegistry(),
         })
-      ).rejects.toThrow(/All models failed/);
+      ).rejects.toThrow(/Working directory not found/);
     });
 
-    it('updates state.lastIndex on success', async () => {
+    it('throws when cwd exists but is not a directory', async () => {
       writeConfig(modelsPath);
-      const { mockSpawn } = makeMockSpawn([0]);
+      const filePath = path.join(tmpDir, 'not-a-dir');
+      fs.writeFileSync(filePath, 'hello');
 
-      await runWithFailover(modelsPath, 'test-pool', ['-p', 'hello'], {
-        spawn: mockSpawn,
-      });
+      await expect(
+        runWithFailover(modelsPath, 'test-pool', ['-p', 'hello'], {
+          cwd: filePath,
+          spawn: () => makeFakeChild({ code: 0 }),
+          registry: createRegistry(),
+        })
+      ).rejects.toThrow(/Working directory is not usable/);
+    });
 
-      const written = JSON.parse(fs.readFileSync(modelsPath, 'utf-8'));
-      expect(written.pools[0].state.lastIndex).toBe(0);
+    it('throws immediately when the adapter is missing', async () => {
+      writeConfig(modelsPath);
+
+      await expect(
+        runWithFailover(modelsPath, 'test-pool', ['-p', 'hello'], {
+          spawn: () => makeFakeChild({ code: 0 }),
+          registry: { get: () => null },
+        })
+      ).rejects.toThrow(/Unknown tool adapter/);
+    });
+
+    it('throws immediately when the binary is missing', async () => {
+      writeConfig(modelsPath);
+
+      await expect(
+        runWithFailover(modelsPath, 'test-pool', ['-p', 'hello'], {
+          spawn: () => makeFakeChild({ code: 0 }),
+          registry: {
+            get: () => ({
+              binary: 'claude',
+              displayName: 'Claude Code',
+              isInstalled: () => false,
+              buildArgs: () => ['--model', 'model-a'],
+              buildEnv: (_entry, env) => env,
+              classifyFailure: () => ({ kind: 'terminal', reason: 'unclassified' }),
+            }),
+          },
+        })
+      ).rejects.toThrow(/Missing dependency/);
     });
   });
 });

@@ -106,11 +106,11 @@ Manage named model profiles and launch single interactive AI coding sessions.
 | `fleet lb add` | — | Create a load balancer pool |
 | `fleet lb list` | — | List all pools |
 | `fleet lb delete` | — | Delete a pool (interactive) |
-| `fleet lb <pool> -- <args>` | — | Run via pool with round-robin and failover |
+| `fleet lb <pool> [--failover <mode> \| --no-failover] [--max-retry <n>] -- <args>` | — | Run via pool with round-robin and classified failover |
 
 ## Load Balancer
 
-Distribute instructions across a pool of model profiles using round-robin. On failure, automatically failovers to the next model.
+Distribute instructions across a pool of model profiles using round-robin. `fleet lb` defaults to `safe-only` failover and `--max-retry 1`: it only switches models when the failure is explicitly classified as recoverable, and it will make at most one extra model switch unless you raise the retry budget.
 
 ### Constraints
 
@@ -119,15 +119,18 @@ Distribute instructions across a pool of model profiles using round-robin. On fa
 
 ### How It Works
 
-1. `fleet lb <pool> -- <args>` reads the pool from `models.json`
+1. `fleet lb <pool> [--failover <mode> | --no-failover] [--max-retry <n>] -- <args>` reads the pool from `models.json`
 2. Picks the next model via round-robin: `(lastIndex + 1) % pool.models.length`
 3. Builds the spawn command via the adapter (`buildArgs` + `buildEnv`, including proxy)
 4. Executes the tool process, waits for exit
-5. On success (exit 0): persists `lastIndex` back to `models.json`
-6. On failure: advances to the next model and retries
-7. If all models fail: reports error with exit code 1
+5. On success: persists the last successful model index back to `models.json`
+6. Under `safe-only`, only explicitly recoverable failures fail over to the next model
+7. Use `--no-failover` (same as `--failover off`) to disable retries, `--failover always` to keep the legacy aggressive behavior, and `--max-retry <n>` to cap extra failover attempts
+8. Startup timeout defaults to 10 seconds before the first stdout/stderr output
+9. Failed attempts do not advance the persisted round-robin pointer
+10. Exhausted or terminal failures are reported with a summary and exit code 1
 
-The `lastIndex` is stored in the pool's `state` field in `models.json`, so round-robin state persists across invocations.
+The `lastIndex` is stored in the pool's `state` field in `models.json`, and it records the last **successful** route rather than the last attempted route.
 
 ### Data Model
 
