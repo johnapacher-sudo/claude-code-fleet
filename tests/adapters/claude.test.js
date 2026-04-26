@@ -120,6 +120,42 @@ describe('ClaudeAdapter', () => {
         timedOut: false,
       })).toEqual({ kind: 'terminal', reason: 'unclassified' });
     });
+
+    it('marks 429 status as failover-safe', () => {
+      expect(adapter.classifyFailure({
+        stderrSnippet: 'HTTP 429 too many requests',
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+      })).toEqual({ kind: 'failover-safe', reason: 'rate_limited' });
+    });
+
+    it('marks auth temporarily unavailable as failover-safe', () => {
+      expect(adapter.classifyFailure({
+        stderrSnippet: 'auth temporarily unavailable, try again later',
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+      })).toEqual({ kind: 'failover-safe', reason: 'auth_temporarily_unusable' });
+    });
+
+    it('handles null stderrSnippet gracefully', () => {
+      expect(adapter.classifyFailure({
+        stderrSnippet: null,
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+      })).toEqual({ kind: 'terminal', reason: 'unclassified' });
+    });
+
+    it('handles undefined stderrSnippet gracefully', () => {
+      expect(adapter.classifyFailure({
+        stderrSnippet: undefined,
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+      })).toEqual({ kind: 'terminal', reason: 'unclassified' });
+    });
   });
 
   describe('hook operations', () => {

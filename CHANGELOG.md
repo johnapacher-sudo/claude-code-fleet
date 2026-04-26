@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.3] - 2026-04-26
+
+### Added
+
+- **Classified Failover** — Three failover modes for load balancer: `safe-only` (default), `always`, `off` via `--failover <mode>` flag
+- `--max-retry <n>` flag to cap extra model switch attempts (default: 1)
+- `--no-failover` flag as shorthand for `--failover off`
+- `classifyFailure()` method in all adapters — detects rate limits, transient startup errors, upstream failures, and auth issues
+- Startup timeout (10s) kills hung tool processes before first stdout/stderr output
+- Structured LB result object with per-attempt details (model, exit code, signal, classification)
+- Failure summary log on terminal/exhausted outcomes
+
+### Changed
+
+- `runWithFailover` now pipes stdout/stderr instead of `stdio: inherit` for process monitoring
+- Failed attempts no longer advance the persisted round-robin pointer
+- `lastIndex` records the last **successful** route, not the last attempted route
+
 ## [1.4.2] - 2026-04-24
 
 ### Fixed
@@ -183,6 +201,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Interactive CLI with arrow-key selector
 - Auto-publish to npm via GitHub Actions
 
+[1.4.3]: https://github.com/johnapacher-sudo/claude-code-fleet/compare/v1.4.2...v1.4.3
 [1.4.2]: https://github.com/johnapacher-sudo/claude-code-fleet/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/johnapacher-sudo/claude-code-fleet/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/johnapacher-sudo/claude-code-fleet/compare/v1.3.2...v1.4.0

@@ -5,6 +5,7 @@ import os from 'os';
 
 describe('lb', () => {
   let loadPools, savePools, pickNext, addPool, deletePool, classifyAttempt, runWithFailover;
+  let createRingBuffer, collectProcessResult;
   let tmpDir, modelsPath;
 
   beforeEach(async () => {
@@ -16,6 +17,8 @@ describe('lb', () => {
     deletePool = mod.deletePool;
     classifyAttempt = mod.classifyAttempt;
     runWithFailover = mod.runWithFailover;
+    createRingBuffer = mod.createRingBuffer;
+    collectProcessResult = mod.collectProcessResult;
 
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-lb-test-'));
     modelsPath = path.join(tmpDir, 'models.json');
@@ -109,6 +112,66 @@ describe('lb', () => {
         { exitCode: 1, signal: null, spawnError: null, timedOut: false, stderrSnippet: 'rate limit exceeded' },
         { kind: 'failover-safe', reason: 'rate_limited' }
       )).toEqual({ kind: 'failover-safe', reason: 'rate_limited' });
+    });
+  });
+
+  describe('createRingBuffer', () => {
+    it('collects pushed chunks and returns via toString', () => {
+      const buf = createRingBuffer(100);
+      buf.push('hello ');
+      buf.push('world');
+      expect(buf.toString()).toBe('hello world');
+    });
+
+    it('truncates from the front when byte limit is exceeded', () => {
+      const buf = createRingBuffer(10);
+      buf.push('1234567890'); // exactly 10 bytes
+      expect(buf.toString()).toBe('1234567890');
+      buf.push('AB'); // now 12 bytes, should keep last 10
+      expect(buf.toString()).toBe('34567890AB');
+    });
+
+    it('handles multi-byte characters correctly', () => {
+      const buf = createRingBuffer(6);
+      buf.push('你好世界'); // 12 bytes in UTF-8
+      const result = buf.toString();
+      expect(Buffer.byteLength(result, 'utf8')).toBeLessThanOrEqual(6);
+    });
+
+    it('returns empty string when nothing has been pushed', () => {
+      const buf = createRingBuffer(100);
+      expect(buf.toString()).toBe('');
+    });
+  });
+
+  describe('classifyAttempt — additional branches', () => {
+    it('classifies SIGTERM (non-timeout) as user_interrupted', () => {
+      expect(classifyAttempt(
+        { exitCode: null, signal: 'SIGTERM', spawnError: null, timedOut: false, stderrSnippet: '' },
+        null
+      )).toEqual({ kind: 'terminal', reason: 'user_interrupted' });
+    });
+
+    it('does not treat SIGTERM from timeout as user_interrupted', () => {
+      expect(classifyAttempt(
+        { exitCode: null, signal: 'SIGTERM', spawnError: null, timedOut: true, timeoutPhase: 'startup', stderrSnippet: '' },
+        null
+      )).toEqual({ kind: 'failover-safe', reason: 'startup_timeout' });
+    });
+
+    it('throws spawnError instead of returning classification', () => {
+      const err = new Error('ENOENT: command not found');
+      expect(() => classifyAttempt(
+        { exitCode: null, signal: null, spawnError: err, timedOut: false, stderrSnippet: '' },
+        null
+      )).toThrow('ENOENT: command not found');
+    });
+
+    it('returns terminal/unclassified when exitCode non-zero and no adapterClassification', () => {
+      expect(classifyAttempt(
+        { exitCode: 1, signal: null, spawnError: null, timedOut: false, stderrSnippet: 'something' },
+        null
+      )).toEqual({ kind: 'terminal', reason: 'unclassified' });
     });
   });
 
@@ -240,6 +303,70 @@ describe('lb', () => {
       const result = deletePool(pools, 'nonexistent');
       expect(result).toHaveLength(1);
       expect(result[0].name).toBe('keep');
+    });
+  });
+
+  describe('collectProcessResult', () => {
+    function makeChild({
+      stdoutChunks = [],
+      stderrChunks = [],
+      exitCode = 0,
+      signal = null,
+      error = null,
+      exitDelay = 10,
+    } = {}) {
+      const listeners = new Map();
+      const child = {
+        stdout: { on: (evt, cb) => { listeners.set(`stdout:${evt}`, cb); } },
+        stderr: { on: (evt, cb) => { listeners.set(`stderr:${evt}`, cb); } },
+        on: (evt, cb) => { listeners.set(evt, cb); return child; },
+        kill: () => {},
+      };
+
+      setTimeout(() => {
+        for (const chunk of stdoutChunks) listeners.get('stdout:data')?.(Buffer.from(chunk));
+        for (const chunk of stderrChunks) listeners.get('stderr:data')?.(Buffer.from(chunk));
+        if (error) {
+          listeners.get('error')?.(error);
+          return;
+        }
+        listeners.get('close')?.(exitCode, signal);
+      }, exitDelay);
+
+      return child;
+    }
+
+    it('collects stderr into snippet', async () => {
+      const child = makeChild({
+        stderrChunks: ['error line 1\n', 'error line 2\n'],
+        exitCode: 1,
+      });
+      const result = await collectProcessResult(child, {
+        stdout: { write: () => {} },
+        stderr: { write: () => {} },
+      });
+      expect(result.stderrSnippet).toContain('error line 1');
+      expect(result.stderrSnippet).toContain('error line 2');
+      expect(result.exitCode).toBe(1);
+    });
+
+    it('returns spawnError when child emits error', async () => {
+      const err = new Error('spawn failed');
+      const child = makeChild({ error: err });
+      const result = await collectProcessResult(child);
+      expect(result.spawnError).toBe(err);
+      expect(result.exitCode).toBeNull();
+      expect(result.stderrSnippet).toBe('');
+    });
+
+    it('pipes stdout to the writable stream', async () => {
+      const output = [];
+      const child = makeChild({ stdoutChunks: ['hello ', 'world'], exitCode: 0 });
+      await collectProcessResult(child, {
+        stdout: { write: chunk => output.push(chunk.toString()) },
+        stderr: { write: () => {} },
+      });
+      expect(output.join('')).toBe('hello world');
     });
   });
 
