@@ -109,6 +109,78 @@ Manage named model profiles and launch single interactive AI coding sessions.
 | `fleet lb delete` | — | Delete a pool (interactive) |
 | `fleet lb <pool> [--failover <mode> \| --no-failover] [--max-retry <n>] -- <args>` | — | Run via pool with round-robin and classified failover |
 
+## Per-Profile Environment Variables
+
+Attach arbitrary environment variables to a model profile. Useful for overriding context windows on proxied models, raising timeouts for slow gateways, or any tool-specific knob exposed as an env var.
+
+### Quick Start
+
+```bash
+# Interactive (model selector + picker UI)
+fleet model env
+
+# Interactive for a specific profile
+fleet model env DeepSeek-V4-Pro
+
+# Non-interactive (scripts / CI)
+fleet model env DeepSeek-V4-Pro set CLAUDE_CODE_MAX_CONTEXT_TOKENS 1000000
+fleet model env DeepSeek-V4-Pro set DISABLE_COMPACT 1
+fleet model env DeepSeek-V4-Pro list
+fleet model env DeepSeek-V4-Pro unset DISABLE_COMPACT
+```
+
+### How It Works
+
+- Env vars are stored per-profile under the optional `env` field in `models.json`.
+- When you run `fleet run --model <name>`, the adapter injects them into the spawned tool's process env **and** (for Claude) into its `--settings '{"env":{...}}'` argument — covering both early-startup reads and runtime reads.
+- `entry.env` values **override** top-level profile fields (e.g. `entry.env.ANTHROPIC_BASE_URL` wins over `apiBaseUrl`).
+- Keys must match `^[A-Z_][A-Z0-9_]*$`.
+
+### Interactive Editor
+
+```
+⬢ Env vars for "DeepSeek-V4-Pro"  (claude · deepseek-v4-pro)
+↑↓ navigate · enter edit · a add · d delete · q back
+
+│ ❯ CLAUDE_CODE_MAX_CONTEXT_TOKENS
+│     1000000
+```
+
+Press `a` to add (preset picker + custom option), `d` to delete, Enter to edit a value, `q` / Esc to exit.
+
+### Built-in Presets (Claude)
+
+When adding a var via `a`, the picker shows these high-hit-rate presets, plus a "Custom..." option for anything else:
+
+| Preset | Hint |
+|--------|------|
+| `CLAUDE_CODE_MAX_CONTEXT_TOKENS` | Override context window for proxied models (**requires `DISABLE_COMPACT=1`**) |
+| `DISABLE_COMPACT` | Disable auto+manual `/compact` (pairs with `MAX_CONTEXT_TOKENS` override) |
+| `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` | Strip `anthropic-beta` headers when proxy gateway rejects them |
+| `API_TIMEOUT_MS` | API request timeout in ms (default 600000; raise for slow proxies) |
+
+> **Context window override gotcha**: `CLAUDE_CODE_MAX_CONTEXT_TOKENS` alone is silently ignored by Claude Code — you must also set `DISABLE_COMPACT=1`. This is an intentional Anthropic safeguard: if you claim a larger window than the backend actually serves, auto-compact would make wrong decisions, so raising the cap requires giving up compact entirely.
+
+See [Claude Code env vars documentation](https://code.claude.com/docs/en/env-vars) for the full catalogue of what Claude Code reads.
+
+### Data Model
+
+```json
+{
+  "name": "DeepSeek-V4-Pro",
+  "tool": "claude",
+  "model": "deepseek-v4-pro",
+  "apiKey": "sk-...",
+  "apiBaseUrl": "https://api.deepseek.com/anthropic",
+  "env": {
+    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1000000",
+    "DISABLE_COMPACT": "1"
+  }
+}
+```
+
+Profiles without an `env` field load unchanged — the feature is fully backward-compatible.
+
 ## Load Balancer
 
 Distribute instructions across a pool of model profiles using round-robin. `fleet lb` defaults to `safe-only` failover and `--max-retry 1`: it only switches models when the failure is explicitly classified as recoverable, and it will make at most one extra model switch unless you raise the retry budget.

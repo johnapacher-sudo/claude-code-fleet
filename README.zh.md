@@ -102,11 +102,84 @@ fleet notify --no-sound
 | `fleet model list` | `model ls` | 列出所有已保存的模型配置 |
 | `fleet model edit` | — | 交互式编辑已有的模型配置 |
 | `fleet model delete` | `model rm` | 交互式删除模型配置 |
+| `fleet model env <name>` | — | 管理某个模型配置的环境变量（list/set/unset/交互式） |
 | `fleet notify` | — | 配置桌面通知（`--on`、`--off`、`--sound`、`--no-sound`） |
 | `fleet lb add` | — | 创建负载均衡池 |
 | `fleet lb list` | — | 列出所有池子 |
 | `fleet lb delete` | — | 删除池子（交互式） |
 | `fleet lb <pool> [--failover <mode> \| --no-failover] [--max-retry <n>] -- <args>` | — | 通过池子运行，支持轮询和分类故障转移 |
+
+## 每模型环境变量
+
+为单个模型配置附加任意环境变量。适合在代理后端上覆盖上下文窗口、为慢代理调高超时、或设置任何以环境变量形式暴露的工具配置。
+
+### 快速开始
+
+```bash
+# 交互式（模型选择器 + 选择界面）
+fleet model env
+
+# 对指定配置进行交互式管理
+fleet model env DeepSeek-V4-Pro
+
+# 非交互式（脚本 / CI）
+fleet model env DeepSeek-V4-Pro set CLAUDE_CODE_MAX_CONTEXT_TOKENS 1000000
+fleet model env DeepSeek-V4-Pro set DISABLE_COMPACT 1
+fleet model env DeepSeek-V4-Pro list
+fleet model env DeepSeek-V4-Pro unset DISABLE_COMPACT
+```
+
+### 工作原理
+
+- 环境变量存储在 `models.json` 中每个配置下可选的 `env` 字段里。
+- 当你执行 `fleet run --model <name>` 时，适配器会将这些变量注入到子进程的 env **并**（对于 Claude）注入到它的 `--settings '{"env":{...}}'` 参数中 —— 同时覆盖启动期和运行期的读取路径。
+- `entry.env` 中的值**优先于**配置顶层的字段（例如 `entry.env.ANTHROPIC_BASE_URL` 会覆盖 `apiBaseUrl`）。
+- Key 必须匹配 `^[A-Z_][A-Z0-9_]*$`。
+
+### 交互式编辑器
+
+```
+⬢ Env vars for "DeepSeek-V4-Pro"  (claude · deepseek-v4-pro)
+↑↓ navigate · enter edit · a add · d delete · q back
+
+│ ❯ CLAUDE_CODE_MAX_CONTEXT_TOKENS
+│     1000000
+```
+
+按 `a` 添加（预设选择器 + 自定义选项），`d` 删除，Enter 编辑值，`q` / Esc 退出。
+
+### 内置预设（Claude）
+
+按 `a` 添加变量时，选择器会显示以下高频预设，并提供 "Custom..." 选项用于其他变量：
+
+| 预设 | 提示 |
+|------|------|
+| `CLAUDE_CODE_MAX_CONTEXT_TOKENS` | 为代理模型覆盖上下文窗口（**需要同时设置 `DISABLE_COMPACT=1`**） |
+| `DISABLE_COMPACT` | 禁用自动和手动 `/compact`（与 `MAX_CONTEXT_TOKENS` 配合使用） |
+| `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` | 当代理网关拒绝 `anthropic-beta` 头时将其剥离 |
+| `API_TIMEOUT_MS` | API 请求超时（毫秒，默认 600000；对于慢代理请调高） |
+
+> **上下文窗口覆盖的坑**：单独设置 `CLAUDE_CODE_MAX_CONTEXT_TOKENS` 会被 Claude Code 静默忽略 —— 必须同时设置 `DISABLE_COMPACT=1`。这是 Anthropic 刻意设置的保护：如果你声明的窗口比后端实际支持的更大，auto-compact 会做出错误决策，因此抬高上限的代价就是完全放弃 compact。
+
+完整的 Claude Code 环境变量清单请参考 [Claude Code 环境变量文档](https://code.claude.com/docs/zh-CN/env-vars)。
+
+### 数据模型
+
+```json
+{
+  "name": "DeepSeek-V4-Pro",
+  "tool": "claude",
+  "model": "deepseek-v4-pro",
+  "apiKey": "sk-...",
+  "apiBaseUrl": "https://api.deepseek.com/anthropic",
+  "env": {
+    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1000000",
+    "DISABLE_COMPACT": "1"
+  }
+}
+```
+
+没有 `env` 字段的旧配置可以无缝加载 —— 该特性完全向后兼容。
 
 ## 负载均衡
 
