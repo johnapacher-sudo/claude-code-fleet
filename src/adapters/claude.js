@@ -21,9 +21,8 @@ class ClaudeAdapter extends ToolAdapter {
     return [
       { key: 'CLAUDE_CODE_MAX_CONTEXT_TOKENS', hint: 'Override context window for proxied models (requires DISABLE_COMPACT=1)' },
       { key: 'DISABLE_COMPACT', hint: 'Disable auto+manual /compact (pairs with MAX_CONTEXT_TOKENS override)' },
-      { key: 'ANTHROPIC_LOG', hint: 'debug | info | warn' },
-      { key: 'ANTHROPIC_BASE_URL', hint: 'API endpoint override' },
-      { key: 'ANTHROPIC_AUTH_TOKEN', hint: 'Auth token (overrides apiKey)' },
+      { key: 'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS', hint: 'Strip anthropic-beta headers when proxy gateway rejects them' },
+      { key: 'API_TIMEOUT_MS', hint: 'API request timeout in ms (default 600000; raise for slow proxies)' },
     ];
   }
 

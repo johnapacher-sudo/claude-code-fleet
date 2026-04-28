@@ -310,8 +310,8 @@ describe('ClaudeAdapter', () => {
       const keys = adapter.commonEnvVars.map(v => v.key);
       expect(keys).toContain('CLAUDE_CODE_MAX_CONTEXT_TOKENS');
       expect(keys).toContain('DISABLE_COMPACT');
-      expect(keys).toContain('ANTHROPIC_LOG');
-      expect(keys).toContain('ANTHROPIC_BASE_URL');
+      expect(keys).toContain('CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS');
+      expect(keys).toContain('API_TIMEOUT_MS');
       for (const v of adapter.commonEnvVars) {
         expect(typeof v.hint).toBe('string');
         expect(v.hint.length).toBeGreaterThan(0);
