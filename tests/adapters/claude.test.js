@@ -308,6 +308,8 @@ describe('ClaudeAdapter', () => {
   describe('entry.env integration', () => {
     it('commonEnvVars lists claude-specific presets', () => {
       const keys = adapter.commonEnvVars.map(v => v.key);
+      expect(keys).toContain('CLAUDE_CODE_MAX_CONTEXT_TOKENS');
+      expect(keys).toContain('DISABLE_COMPACT');
       expect(keys).toContain('ANTHROPIC_LOG');
       expect(keys).toContain('ANTHROPIC_BASE_URL');
       for (const v of adapter.commonEnvVars) {

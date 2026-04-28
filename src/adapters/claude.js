@@ -19,6 +19,8 @@ class ClaudeAdapter extends ToolAdapter {
 
   get commonEnvVars() {
     return [
+      { key: 'CLAUDE_CODE_MAX_CONTEXT_TOKENS', hint: 'Override context window for proxied models (requires DISABLE_COMPACT=1)' },
+      { key: 'DISABLE_COMPACT', hint: 'Disable auto+manual /compact (pairs with MAX_CONTEXT_TOKENS override)' },
       { key: 'ANTHROPIC_LOG', hint: 'debug | info | warn' },
       { key: 'ANTHROPIC_BASE_URL', hint: 'API endpoint override' },
       { key: 'ANTHROPIC_AUTH_TOKEN', hint: 'Auth token (overrides apiKey)' },
