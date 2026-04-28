@@ -93,6 +93,32 @@ describe('CodexAdapter', () => {
     });
   });
 
+  describe('buildEnv with entry.env', () => {
+    it('merges entry.env into the returned env', () => {
+      const env = adapter.buildEnv(
+        { name: 'p', apiKey: 'sk', env: { CUSTOM_FLAG: '1', LOG_LEVEL: 'debug' } },
+        { PATH: '/bin' }
+      );
+      expect(env.CUSTOM_FLAG).toBe('1');
+      expect(env.LOG_LEVEL).toBe('debug');
+      expect(env.OPENAI_API_KEY).toBe('sk');
+    });
+
+    it('entry.env overrides OPENAI_API_KEY if present', () => {
+      const env = adapter.buildEnv(
+        { name: 'p', apiKey: 'sk', env: { OPENAI_API_KEY: 'override' } },
+        {}
+      );
+      expect(env.OPENAI_API_KEY).toBe('override');
+    });
+
+    it('no-op when entry.env absent', () => {
+      const env = adapter.buildEnv({ name: 'p', apiKey: 'sk' }, {});
+      expect(env.OPENAI_API_KEY).toBe('sk');
+      expect(Object.keys(env)).not.toContain('CUSTOM_FLAG');
+    });
+  });
+
   describe('classifyFailure', () => {
     it('marks rate limit as failover-safe', () => {
       expect(adapter.classifyFailure({

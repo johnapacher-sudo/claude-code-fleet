@@ -34,7 +34,7 @@ class CodexAdapter extends ToolAdapter {
     const env = { ...baseEnv, FLEET_MODEL_NAME: entry.name };
     delete env.OPENAI_BASE_URL;
     if (entry.apiKey) env.OPENAI_API_KEY = entry.apiKey;
-    return env;
+    return this.applyUserEnv(entry, env);
   }
 
   installHooks(hookClientPath) {
