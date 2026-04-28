@@ -427,6 +427,100 @@ async function cmdModelDelete() {
   console.log(ANSI.green(`  Model "${selected}" deleted.`));
 }
 
+// ─── Model env command ──────────────────────────────────────────────────────
+
+async function cmdModelEnv(name, sub, rest) {
+  if (!name) {
+    console.error(ANSI.red('Usage: fleet model env <name> [list|set KEY VALUE|unset KEY]'));
+    process.exit(1);
+  }
+  const data = loadModels();
+  const entry = data.models.find(m => m.name === name);
+  if (!entry) {
+    console.error(ANSI.red(`Model "${name}" not found.`));
+    if (data.models.length > 0) {
+      console.error(`Available: ${data.models.map(m => m.name).join(', ')}`);
+    }
+    process.exit(1);
+  }
+
+  const action = sub || 'interactive';
+  switch (action) {
+    case 'list':
+      cmdModelEnvList(entry);
+      return;
+    case 'set': {
+      const [key, ...valueParts] = rest;
+      const value = valueParts.join(' ');
+      cmdModelEnvSet(data, entry, key, value);
+      return;
+    }
+    case 'unset': {
+      const [key] = rest;
+      cmdModelEnvUnset(data, entry, key);
+      return;
+    }
+    case 'interactive':
+      await cmdModelEnvInteractive(data, entry);
+      return;
+    default:
+      console.error(ANSI.red(`Unknown env subcommand: ${action}`));
+      console.error('Available: list, set, unset');
+      process.exit(1);
+  }
+}
+
+function cmdModelEnvList(entry) {
+  const env = entry.env || {};
+  const keys = Object.keys(env);
+  if (keys.length === 0) {
+    console.log(ANSI.dim(`  No env vars configured for "${entry.name}".`));
+    return;
+  }
+  console.log(`\n\x1b[38;2;167;139;250m\x1b[1m⬢ Env vars for "${entry.name}"\x1b[0m  \x1b[38;2;82;82;82m${keys.length} set\x1b[0m\n`);
+  for (const k of keys) {
+    console.log(`  \x1b[38;2;167;139;250m│\x1b[0m \x1b[38;2;224;224;224m\x1b[1m${k}\x1b[0m`);
+    console.log(`    \x1b[38;2;139;155;168m${env[k]}\x1b[0m`);
+  }
+}
+
+function cmdModelEnvSet(data, entry, key, value) {
+  if (!key || value === undefined || value === '') {
+    console.error(ANSI.red('Usage: fleet model env <name> set <KEY> <VALUE>'));
+    process.exit(1);
+  }
+  const err = validateEnvKey(key, []); // duplicate check skipped — set = upsert
+  if (err) {
+    console.error(ANSI.red(err));
+    process.exit(1);
+  }
+  const updated = applyEnvSet(entry, key, value);
+  const newData = { ...data, models: data.models.map(m => m.name === entry.name ? updated : m) };
+  saveModels(newData);
+  console.log(ANSI.green(`  Set ${key}=${value} on "${entry.name}".`));
+}
+
+function cmdModelEnvUnset(data, entry, key) {
+  if (!key) {
+    console.error(ANSI.red('Usage: fleet model env <name> unset <KEY>'));
+    process.exit(1);
+  }
+  if (!entry.env || !(key in entry.env)) {
+    console.error(ANSI.yellow(`  ${key} was not set on "${entry.name}".`));
+    return;
+  }
+  const updated = applyEnvUnset(entry, key);
+  const newData = { ...data, models: data.models.map(m => m.name === entry.name ? updated : m) };
+  saveModels(newData);
+  console.log(ANSI.green(`  Unset ${key} on "${entry.name}".`));
+}
+
+async function cmdModelEnvInteractive(_data, _entry) {
+  // Filled in Task 8.
+  console.error(ANSI.red('Interactive env editor not yet implemented.'));
+  process.exit(1);
+}
+
 // ─── Run command ─────────────────────────────────────────────────────────────
 
 async function cmdRun(modelName, cwd, proxyOpt, passthrough) {
@@ -716,6 +810,7 @@ ${ANSI.bold('Commands:')}
   model list          List all model profiles
   model edit          Edit a model profile (interactive)
   model delete        Delete a model profile (interactive)
+  model env <name>    Manage env vars for a model profile (list/set/unset/interactive)
   notify              Configure desktop notifications
   lb add              Create a load balancer pool
   lb list             List all pools
@@ -910,9 +1005,15 @@ function main() {
       case 'rm':
         cmdModelDelete();
         break;
+      case 'env':
+        cmdModelEnv(args[0], args[1], args.slice(2)).catch(err => {
+          console.error(ANSI.red(err.message));
+          process.exit(1);
+        });
+        break;
       default:
         console.error(ANSI.red(`Unknown model command: ${modelCmd}`));
-        console.error('Available: add, list, edit, delete');
+        console.error('Available: add, list, edit, delete, env');
         process.exit(1);
     }
     return;
@@ -977,4 +1078,5 @@ module.exports = {
   parseArgs, main, ANSI, GLOBAL_CONFIG_DIR,
   resolveLbFailoverMode, resolveLbMaxRetry, mapLbResultToExitCode, formatLbFailureSummary,
   validateEnvKey, applyEnvSet, applyEnvUnset,
+  cmdModelEnv, cmdModelEnvList, cmdModelEnvSet, cmdModelEnvUnset,
 };

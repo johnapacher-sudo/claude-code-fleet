@@ -349,3 +349,22 @@ describe('formatLbFailureSummary', () => {
     expect(summary).toContain('beta');
   });
 });
+
+describe('parseArgs — model env', () => {
+  it('parses `model env <name>` as command=model subcommand=env args=[name]', () => {
+    const r = parseArgs(['model', 'env', 'ds-v4-pro']);
+    expect(r.command).toBe('model');
+    expect(r.subcommand).toBe('env');
+    expect(r.args).toEqual(['ds-v4-pro']);
+  });
+
+  it('parses `model env <name> set KEY VALUE`', () => {
+    const r = parseArgs(['model', 'env', 'ds', 'set', 'FOO', 'bar']);
+    expect(r.args).toEqual(['ds', 'set', 'FOO', 'bar']);
+  });
+
+  it('parses `model env <name> unset KEY`', () => {
+    const r = parseArgs(['model', 'env', 'ds', 'unset', 'FOO']);
+    expect(r.args).toEqual(['ds', 'unset', 'FOO']);
+  });
+});
