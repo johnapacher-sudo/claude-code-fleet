@@ -34,7 +34,7 @@ class CopilotAdapter extends ToolAdapter {
     const env = { ...baseEnv, FLEET_MODEL_NAME: entry.name };
     if (entry.model) env.COPILOT_MODEL = entry.model;
     if (entry.apiKey) env.COPILOT_GITHUB_TOKEN = entry.apiKey;
-    return env;
+    return this.applyUserEnv(entry, env);
   }
 
   /**

@@ -469,4 +469,29 @@ describe('CopilotAdapter', () => {
       expect(adapter.summarizeToolUse('WebSearch', { query: 'foo' })).toBe('WebSearch');
     });
   });
+
+  describe('buildEnv with entry.env', () => {
+    it('merges entry.env into the returned env', () => {
+      const env = adapter.buildEnv(
+        { name: 'p', model: 'gpt-4.1', env: { CUSTOM_FLAG: '1' } },
+        { PATH: '/bin' }
+      );
+      expect(env.CUSTOM_FLAG).toBe('1');
+      expect(env.COPILOT_MODEL).toBe('gpt-4.1');
+    });
+
+    it('entry.env overrides COPILOT_GITHUB_TOKEN if present', () => {
+      const env = adapter.buildEnv(
+        { name: 'p', apiKey: 'pat', env: { COPILOT_GITHUB_TOKEN: 'override' } },
+        {}
+      );
+      expect(env.COPILOT_GITHUB_TOKEN).toBe('override');
+    });
+
+    it('no-op when entry.env absent', () => {
+      const env = adapter.buildEnv({ name: 'p', model: 'gpt-4.1' }, {});
+      expect(env.COPILOT_MODEL).toBe('gpt-4.1');
+      expect(Object.keys(env)).not.toContain('CUSTOM_FLAG');
+    });
+  });
 });
