@@ -87,7 +87,7 @@ Hook config locations:
 All state stored under `~/.config/claude-code-fleet/`:
 
 ```
-models.json        — [{ name, tool, model, apiKey, apiBaseUrl, proxy }]
+models.json        — [{ name, tool, model, apiKey, apiBaseUrl, proxy, env }]
 fleet.sock         — Unix domain socket (transient, Observer mode)
 hooks/             — Deployed hook-client.js, notifier.js, adapters/
 notify.json        — { enabled, sound, events: { stop, notification } }
@@ -106,6 +106,7 @@ sessions/<id>.json — Per-session metadata for Observer recovery
 ## Common Tasks
 
 - **Add a new adapter** → See `docs/adapter-guide.md`
+- **Add env vars to a profile** → `fleet model env <name>` (interactive) or `set/unset` subcommands
 - **Modify the TUI** → Edit files in `src/components/`. App state lives in `app.mjs` via React hooks. Master data accessed through the `master` prop.
 - **Add a new hook event** → Add event name to adapter's `hookEvents` getter, update `normalizePayload()`, update `Master.handleEvent()`, update TUI display if needed.
 - **Change the socket protocol** → See `docs/protocol.md` for the newline-delimited JSON spec.

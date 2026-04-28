@@ -102,6 +102,7 @@ Manage named model profiles and launch single interactive AI coding sessions.
 | `fleet model list` | `model ls` | List all saved model profiles |
 | `fleet model edit` | — | Interactively edit an existing model profile |
 | `fleet model delete` | `model rm` | Interactively delete a model profile |
+| `fleet model env <name>` | — | Manage env vars for a profile (list/set/unset/interactive) |
 | `fleet notify` | — | Configure desktop notifications (`--on`, `--off`, `--sound`, `--no-sound`) |
 | `fleet lb add` | — | Create a load balancer pool |
 | `fleet lb list` | — | List all pools |
