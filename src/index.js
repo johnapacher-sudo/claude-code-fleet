@@ -515,10 +515,132 @@ function cmdModelEnvUnset(data, entry, key) {
   console.log(ANSI.green(`  Unset ${key} on "${entry.name}".`));
 }
 
-async function cmdModelEnvInteractive(_data, _entry) {
-  // Filled in Task 8.
-  console.error(ANSI.red('Interactive env editor not yet implemented.'));
-  process.exit(1);
+async function cmdModelEnvInteractive(initialData, initialEntry) {
+  const selectorPath = path.join(__dirname, 'components', 'selector.mjs');
+  const ui = await import(selectorPath);
+
+  let data = initialData;
+  let entry = initialEntry;
+  let changed = 0;
+
+  listLoop: while (true) {
+    const env = entry.env || {};
+    const keys = Object.keys(env);
+    const items = keys.length > 0
+      ? keys.map(k => ({ label: k, detail: '', meta: env[k], value: k }))
+      : [{ label: '(no env vars configured)', detail: 'Press a to add', value: '__empty__' }];
+
+    const listRes = await ui.renderSelector({
+      title: `Env vars for "${entry.name}"  (${entry.tool || 'claude'} · ${entry.model || 'default'})`,
+      items,
+      onAdd: () => {},
+      onDelete: keys.length > 0 ? () => {} : undefined,
+    });
+
+    if (listRes.kind === 'cancel') break listLoop;
+
+    if (listRes.kind === 'add') {
+      const added = await promptEnvAdd(ui, entry);
+      if (added) {
+        entry = applyEnvSet(entry, added.key, added.value);
+        data = persistEntry(data, entry);
+        changed++;
+      }
+      continue listLoop;
+    }
+
+    if (listRes.kind === 'delete') {
+      const confirmed = await ui.renderConfirm({
+        title: `Delete env var "${listRes.value}"?`,
+        items: { label: listRes.value, detail: env[listRes.value], value: listRes.value },
+        dangerMode: true,
+      });
+      if (confirmed) {
+        entry = applyEnvUnset(entry, listRes.value);
+        data = persistEntry(data, entry);
+        changed++;
+      }
+      continue listLoop;
+    }
+
+    if (listRes.kind === 'select') {
+      if (listRes.value === '__empty__') continue listLoop;
+      const key = listRes.value;
+      const updated = await ui.renderInput({
+        title: `Edit ${key}`,
+        fields: [{ label: 'Value', value: env[key] || '', placeholder: 'new value' }],
+        requiredFields: ['Value'],
+      });
+      if (updated) {
+        entry = applyEnvSet(entry, key, updated.Value);
+        data = persistEntry(data, entry);
+        changed++;
+      }
+      continue listLoop;
+    }
+  }
+
+  if (changed > 0) {
+    const setCount = Object.keys(entry.env || {}).length;
+    console.log(ANSI.green(`  Env vars for "${entry.name}" updated (${setCount} set).`));
+  }
+}
+
+async function promptEnvAdd(ui, entry) {
+  const adapter = registry.get(entry.tool || 'claude');
+  const existing = Object.keys(entry.env || {});
+  const presets = (adapter && adapter.commonEnvVars) ? adapter.commonEnvVars : [];
+  const available = presets.filter(p => !existing.includes(p.key));
+
+  const items = [
+    ...available.map(p => ({ label: p.key, meta: p.hint, value: `preset:${p.key}` })),
+    { label: '+ Custom...', meta: 'Enter any KEY manually', value: '__custom__' },
+  ];
+
+  const pick = await ui.renderSelector({
+    title: `Add env var to "${entry.name}"`,
+    items,
+  });
+  if (pick.kind !== 'select') return null;
+
+  if (pick.value === '__custom__') {
+    return await promptCustomEnvAdd(ui, existing);
+  }
+  const key = pick.value.replace(/^preset:/, '');
+  const preset = presets.find(p => p.key === key);
+  const form = await ui.renderInput({
+    title: `Set ${key}`,
+    fields: [{ label: 'Value', value: '', placeholder: preset ? preset.hint : 'value' }],
+    requiredFields: ['Value'],
+  });
+  if (!form) return null;
+  return { key, value: form.Value };
+}
+
+async function promptCustomEnvAdd(ui, existing) {
+  while (true) {
+    const form = await ui.renderInput({
+      title: 'Add custom env var',
+      fields: [
+        { label: 'Key', value: '', placeholder: 'e.g. DISABLE_TELEMETRY' },
+        { label: 'Value', value: '', placeholder: 'value' },
+      ],
+      requiredFields: ['Key', 'Value'],
+    });
+    if (!form) return null;
+    const err = validateEnvKey(form.Key, existing);
+    if (err) {
+      console.error(ANSI.red(`  ${err}`));
+      continue;
+    }
+    return { key: form.Key, value: form.Value };
+  }
+}
+
+function persistEntry(data, entry) {
+  const newData = { ...data, models: data.models.map(m => m.name === entry.name ? entry : m) };
+  saveModels(newData);
+  return newData;
 }
 
 // ─── Run command ─────────────────────────────────────────────────────────────
@@ -1079,4 +1201,5 @@ module.exports = {
   resolveLbFailoverMode, resolveLbMaxRetry, mapLbResultToExitCode, formatLbFailureSummary,
   validateEnvKey, applyEnvSet, applyEnvUnset,
   cmdModelEnv, cmdModelEnvList, cmdModelEnvSet, cmdModelEnvUnset,
+  persistEntry, promptEnvAdd, promptCustomEnvAdd,
 };
