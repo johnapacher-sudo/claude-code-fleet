@@ -17,6 +17,15 @@ class ClaudeAdapter extends ToolAdapter {
   get binary() { return 'claude'; }
   get hookEvents() { return ['SessionStart', 'PostToolUse', 'Stop', 'Notification']; }
 
+  get commonEnvVars() {
+    return [
+      { key: 'CLAUDE_CODE_MAX_CONTEXT_TOKENS', hint: 'Context token limit (default 200000)' },
+      { key: 'ANTHROPIC_LOG', hint: 'debug | info | warn' },
+      { key: 'ANTHROPIC_BASE_URL', hint: 'API endpoint override' },
+      { key: 'ANTHROPIC_AUTH_TOKEN', hint: 'Auth token (overrides apiKey)' },
+    ];
+  }
+
   buildArgs(entry) {
     const settingsEnv = {};
     if (entry.apiKey) {
@@ -24,6 +33,11 @@ class ClaudeAdapter extends ToolAdapter {
       settingsEnv.ANTHROPIC_API_KEY = '';
     }
     if (entry.apiBaseUrl) settingsEnv.ANTHROPIC_BASE_URL = entry.apiBaseUrl;
+    if (entry.env && typeof entry.env === 'object') {
+      for (const [k, v] of Object.entries(entry.env)) {
+        if (v !== undefined && v !== null) settingsEnv[k] = String(v);
+      }
+    }
 
     const args = ['--dangerously-skip-permissions'];
     if (entry.model) args.push('--model', entry.model);
@@ -33,7 +47,8 @@ class ClaudeAdapter extends ToolAdapter {
   }
 
   buildEnv(entry, baseEnv) {
-    return { ...baseEnv, FLEET_MODEL_NAME: entry.name };
+    const env = { ...baseEnv, FLEET_MODEL_NAME: entry.name };
+    return this.applyUserEnv(entry, env);
   }
 
   installHooks(hookClientPath) {

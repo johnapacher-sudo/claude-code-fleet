@@ -304,4 +304,45 @@ describe('ClaudeAdapter', () => {
       expect(adapter.summarizeToolUse('WebSearch', { query: 'foo' })).toBe('WebSearch');
     });
   });
+
+  describe('entry.env integration', () => {
+    it('commonEnvVars lists claude-specific presets', () => {
+      const keys = adapter.commonEnvVars.map(v => v.key);
+      expect(keys).toContain('CLAUDE_CODE_MAX_CONTEXT_TOKENS');
+      expect(keys).toContain('ANTHROPIC_LOG');
+      for (const v of adapter.commonEnvVars) {
+        expect(typeof v.hint).toBe('string');
+        expect(v.hint.length).toBeGreaterThan(0);
+      }
+    });
+
+    it('buildArgs embeds entry.env into --settings env object', () => {
+      const args = adapter.buildArgs({
+        apiKey: 'sk-ant-x',
+        apiBaseUrl: 'https://api.anthropic.com',
+        env: { CLAUDE_CODE_MAX_CONTEXT_TOKENS: '1000000' },
+      });
+      const idx = args.indexOf('--settings');
+      expect(idx).toBeGreaterThanOrEqual(0);
+      const settings = JSON.parse(args[idx + 1]);
+      expect(settings.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe('1000000');
+      expect(settings.env.ANTHROPIC_AUTH_TOKEN).toBe('sk-ant-x');
+    });
+
+    it('entry.env overrides top-level ANTHROPIC_BASE_URL', () => {
+      const args = adapter.buildArgs({
+        apiKey: 'sk',
+        apiBaseUrl: 'https://default.example',
+        env: { ANTHROPIC_BASE_URL: 'https://override.example' },
+      });
+      const settings = JSON.parse(args[args.indexOf('--settings') + 1]);
+      expect(settings.env.ANTHROPIC_BASE_URL).toBe('https://override.example');
+    });
+
+    it('buildEnv also merges entry.env into process env', () => {
+      const env = adapter.buildEnv({ name: 'p', env: { FOO: 'bar' } }, { PATH: '/bin' });
+      expect(env.FOO).toBe('bar');
+      expect(env.FLEET_MODEL_NAME).toBe('p');
+    });
+  });
 });
