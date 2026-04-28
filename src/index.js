@@ -29,6 +29,25 @@ function truncStr(s, max) {
   return s.length > max ? s.slice(0, max) + '...' : s;
 }
 
+const ENV_KEY_RE = /^[A-Z_][A-Z0-9_]*$/;
+
+function validateEnvKey(key, existingKeys) {
+  if (!key) return 'Key is required';
+  if (!ENV_KEY_RE.test(key)) return 'Key must be UPPER_SNAKE_CASE (A-Z, 0-9, _)';
+  if (existingKeys && existingKeys.includes(key)) return `Key "${key}" already set`;
+  return null;
+}
+
+function applyEnvSet(entry, key, value) {
+  return { ...entry, env: { ...(entry.env || {}), [key]: value } };
+}
+
+function applyEnvUnset(entry, key) {
+  const existing = entry.env || {};
+  const { [key]: _removed, ...rest } = existing;
+  return { ...entry, env: rest };
+}
+
 function modelMeta(m) {
   const key = m.apiKey ? truncStr(m.apiKey, 12) + '...' : 'not set';
   const endpoint = truncStr(m.apiBaseUrl || 'default', 32);
@@ -955,4 +974,5 @@ module.exports = {
   getNotifyConfigPath, loadNotifyConfigFile, saveNotifyConfig, cmdNotify,
   parseArgs, main, ANSI, GLOBAL_CONFIG_DIR,
   resolveLbFailoverMode, resolveLbMaxRetry, mapLbResultToExitCode, formatLbFailureSummary,
+  validateEnvKey, applyEnvSet, applyEnvUnset,
 };
