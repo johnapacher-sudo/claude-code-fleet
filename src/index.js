@@ -201,7 +201,7 @@ function ask(question) {
 async function selectFromList(items, label, dangerMode = false) {
   const selectorPath = path.join(__dirname, 'components', 'selector.mjs');
   const { renderSelector } = await import(selectorPath);
-  return renderSelector({
+  const result = await renderSelector({
     title: label,
     items: items.map(item => ({
       label: item.label || stripAnsi(item.display),
@@ -212,6 +212,8 @@ async function selectFromList(items, label, dangerMode = false) {
     })),
     dangerMode,
   });
+  if (result.kind === 'cancel') return null;
+  return result.value;
 }
 
 // ─── Model commands ──────────────────────────────────────────────────────────

@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { render as inkRender } from 'ink-testing-library';
+import React from 'react';
+import { Selector, renderSelector } from '../../src/components/selector.mjs';
 
 // These functions use Ink's render() internally, which doesn't work in test env.
 // We verify they exist and have the right signatures.
@@ -28,5 +31,39 @@ describe('renderConfirm signature', () => {
 describe('renderInput signature', () => {
   it('accepts { title, fields, requiredFields }', () => {
     expect(mod.renderInput.length).toBe(1);
+  });
+});
+
+describe('Selector help line', () => {
+  it('shows a/d hints when handlers provided', () => {
+    const { lastFrame } = inkRender(
+      React.createElement(Selector, {
+        title: 'T',
+        items: [{ label: 'x', value: 'x' }],
+        onSelect: () => {}, onCancel: () => {},
+        onAdd: () => {}, onDelete: () => {},
+      })
+    );
+    expect(lastFrame()).toMatch(/a add/);
+    expect(lastFrame()).toMatch(/d delete/);
+  });
+
+  it('omits a/d hints when handlers absent', () => {
+    const { lastFrame } = inkRender(
+      React.createElement(Selector, {
+        title: 'T',
+        items: [{ label: 'x', value: 'x' }],
+        onSelect: () => {}, onCancel: () => {},
+      })
+    );
+    expect(lastFrame()).not.toMatch(/a add/);
+    expect(lastFrame()).not.toMatch(/d delete/);
+  });
+});
+
+describe('renderSelector export contract', () => {
+  it('is a function that accepts options', () => {
+    expect(typeof renderSelector).toBe('function');
+    expect(renderSelector.length).toBeGreaterThanOrEqual(1);
   });
 });

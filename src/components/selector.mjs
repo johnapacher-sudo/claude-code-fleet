@@ -14,7 +14,7 @@ const COLOR_META = '#8b949e';
 
 // ─── Selector ────────────────────────────────────────────────────────────────
 
-function Selector({ title, items, dangerMode, onSelect, onCancel }) {
+function Selector({ title, items, dangerMode, onSelect, onCancel, onAdd, onDelete }) {
   const [selected, setSelected] = useState(0);
   const accent = dangerMode ? ACCENT_DANGER : ACCENT;
 
@@ -25,18 +25,34 @@ function Selector({ title, items, dangerMode, onSelect, onCancel }) {
     }
     if (key.upArrow || input === 'k') {
       setSelected(i => (i - 1 + items.length) % items.length);
+      return;
     }
     if (key.downArrow || input === 'j') {
       setSelected(i => (i + 1) % items.length);
+      return;
     }
     if (key.return) {
       onSelect(items[selected], selected);
+      return;
+    }
+    if (input === 'a' && typeof onAdd === 'function') {
+      onAdd();
+      return;
+    }
+    if (input === 'd' && typeof onDelete === 'function' && items.length > 0) {
+      onDelete(items[selected], selected);
+      return;
     }
   });
 
+  const hints = ['\u2191\u2193 navigate', 'enter select'];
+  if (typeof onAdd === 'function') hints.push('a add');
+  if (typeof onDelete === 'function') hints.push('d delete');
+  hints.push('q cancel');
+
   return h(Box, { flexDirection: 'column' },
     h(Text, { color: accent, bold: true }, `\u2B22 ${title}`),
-    h(Text, { color: COLOR_DIM }, '\u2191\u2193 navigate \u00B7 enter select \u00B7 q cancel'),
+    h(Text, { color: COLOR_DIM }, hints.join(' \u00B7 ')),
     h(Box, { marginBottom: 1 }),
     ...items.map((item, i) => {
       const isActive = i === selected;
@@ -79,7 +95,9 @@ function Selector({ title, items, dangerMode, onSelect, onCancel }) {
   );
 }
 
-export function renderSelector({ title, items, dangerMode = false }) {
+export { Selector };
+
+export function renderSelector({ title, items, dangerMode = false, onAdd, onDelete }) {
   return new Promise((resolve) => {
     let resolved = false;
 
@@ -98,15 +116,27 @@ export function renderSelector({ title, items, dangerMode = false }) {
             (item.detail ? ` \x1b[38;2;82;82;82m${item.detail}\x1b[0m` : '') +
             '\n'
           );
-          resolve(item.value);
+          resolve({ kind: 'select', value: item.value, item });
         },
         onCancel: () => {
           if (resolved) return;
           resolved = true;
           app.unmount();
           process.stdout.write('\x1b[38;2;82;82;82mCancelled.\x1b[0m\n');
-          resolve(null);
+          resolve({ kind: 'cancel' });
         },
+        onAdd: onAdd ? () => {
+          if (resolved) return;
+          resolved = true;
+          app.unmount();
+          resolve({ kind: 'add' });
+        } : undefined,
+        onDelete: onDelete ? (item) => {
+          if (resolved) return;
+          resolved = true;
+          app.unmount();
+          resolve({ kind: 'delete', value: item.value, item });
+        } : undefined,
       })
     );
   });
