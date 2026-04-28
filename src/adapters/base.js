@@ -6,6 +6,8 @@ class ToolAdapter {
   get binary() { throw new Error('ToolAdapter.binary must be implemented'); }
   get hookEvents() { throw new Error('ToolAdapter.hookEvents must be implemented'); }
 
+  get commonEnvVars() { return []; }
+
   isInstalled() {
     const r = spawnSync('which', [this.binary], { encoding: 'utf-8', stdio: 'pipe' });
     return r.status === 0;
@@ -22,6 +24,15 @@ class ToolAdapter {
 
   summarizeToolUse(toolName, _toolInput) {
     return toolName;
+  }
+
+  applyUserEnv(entry, env) {
+    if (entry && entry.env && typeof entry.env === 'object') {
+      for (const [k, v] of Object.entries(entry.env)) {
+        if (v !== undefined && v !== null) env[k] = String(v);
+      }
+    }
+    return env;
   }
 }
 
