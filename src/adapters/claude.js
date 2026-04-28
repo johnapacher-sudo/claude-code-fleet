@@ -19,7 +19,6 @@ class ClaudeAdapter extends ToolAdapter {
 
   get commonEnvVars() {
     return [
-      { key: 'CLAUDE_CODE_MAX_CONTEXT_TOKENS', hint: 'Context token limit (default 200000)' },
       { key: 'ANTHROPIC_LOG', hint: 'debug | info | warn' },
       { key: 'ANTHROPIC_BASE_URL', hint: 'API endpoint override' },
       { key: 'ANTHROPIC_AUTH_TOKEN', hint: 'Auth token (overrides apiKey)' },

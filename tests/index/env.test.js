@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const mod = await import('../../src/index.js');
-const { cmdModelEnvList, cmdModelEnvSet, cmdModelEnvUnset } = mod;
+const { cmdModelEnvList, cmdModelEnvSet, cmdModelEnvUnset, cmdModelEnv } = mod;
 
 describe('fleet model env CLI', () => {
   let logSpy, errSpy, exitSpy;
@@ -60,5 +60,11 @@ describe('fleet model env CLI', () => {
     const out = errSpy.mock.calls.map(c => c.join(' ')).join('\n');
     expect(out).toMatch(/was not set/);
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it('cmdModelEnv rejects no-name when a subcommand is provided', async () => {
+    await expect(cmdModelEnv(undefined, 'set', ['FOO', 'bar'])).rejects.toThrow(/exit:1/);
+    const out = errSpy.mock.calls.map(c => c.join(' ')).join('\n');
+    expect(out).toMatch(/Usage: fleet model env/);
   });
 });

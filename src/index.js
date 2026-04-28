@@ -430,11 +430,25 @@ async function cmdModelDelete() {
 // ─── Model env command ──────────────────────────────────────────────────────
 
 async function cmdModelEnv(name, sub, rest) {
-  if (!name) {
-    console.error(ANSI.red('Usage: fleet model env <name> [list|set KEY VALUE|unset KEY]'));
+  const data = loadModels();
+  if (data.models.length === 0) {
+    console.error(ANSI.yellow('No model profiles configured.'));
+    console.error(`Run ${ANSI.bold('fleet model add')} to create one.`);
     process.exit(1);
   }
-  const data = loadModels();
+
+  if (!name) {
+    // Non-interactive subcommands require an explicit name
+    if (sub) {
+      console.error(ANSI.red('Usage: fleet model env <name> [list|set KEY VALUE|unset KEY]'));
+      process.exit(1);
+    }
+    const items = data.models.map(m => modelItem(m));
+    const selected = await selectFromList(items, 'Select a model to manage env vars');
+    if (selected === null) return;
+    name = selected;
+  }
+
   const entry = data.models.find(m => m.name === name);
   if (!entry) {
     console.error(ANSI.red(`Model "${name}" not found.`));
