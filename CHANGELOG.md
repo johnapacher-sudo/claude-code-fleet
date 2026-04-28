@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.4] - 2026-04-28
+
+### Added
+
+- **Per-Model Environment Variables** — Set and manage environment variables per model profile via `fleet model env`
+- `fleet model env <name>` — interactive env editor (list, set, unset)
+- `fleet model env <name> set <KEY> <VALUE>` / `unset <KEY>` — non-interactive subcommands
+- Env var validation with reserved-key protection and empty-value detection
+- `applyUserEnv()` helper merges `entry.env` into spawned tool's environment for all adapters
+- Claude adapter merges env vars into `settings.json` and process env; provides curated presets (`CLAUDE_CODE_MAX_CONTEXT_TOKENS`, `DISABLE_COMPACT`, etc.)
+- Codex and Copilot adapters honor `entry.env` in `buildEnv()`
+- Selector component supports `onAdd`/`onDelete` props and object-shaped return values
+
+### Fixed
+
+- `fleet model env` now opens selector when no profile name is given, instead of crashing
+
+### Changed
+
+- Curated Claude env presets down to 4 useful variables (removed misleading `context-tokens` preset)
+
 ## [1.4.3] - 2026-04-26
 
 ### Added
@@ -201,6 +222,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Interactive CLI with arrow-key selector
 - Auto-publish to npm via GitHub Actions
 
+[1.4.4]: https://github.com/johnapacher-sudo/claude-code-fleet/compare/v1.4.3...v1.4.4
 [1.4.3]: https://github.com/johnapacher-sudo/claude-code-fleet/compare/v1.4.2...v1.4.3
 [1.4.2]: https://github.com/johnapacher-sudo/claude-code-fleet/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/johnapacher-sudo/claude-code-fleet/compare/v1.4.0...v1.4.1
